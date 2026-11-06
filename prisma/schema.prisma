@@ -63,6 +63,8 @@ model Settings {
   labelTimingPerMarket  String   @default("{}")
   // JSON: { "SE": { carrierId, service }, ... } fallback routing per market
   defaultReturnMethodPerMarket String @default("{}")
+  // JSON: { "SE": { name, address, city, zip, country }, ... }
+  warehouseAddressesPerMarket String @default("{}")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

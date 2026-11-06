@@ -25,6 +25,7 @@ import {
   upsertDeadlineExtension,
   deleteDeadlineExtension,
 } from "../services/deadline-extensions.server";
+import { syncCarriers } from "../services/shippypro.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -116,6 +117,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ok: true, message: "Deadline extension deleted" };
     }
 
+    if (intent === "sync_carriers") {
+      const result = await syncCarriers(shop);
+      if (!result.ok) {
+        return { ok: false, message: `Carrier sync failed: ${result.error}` };
+      }
+      const count = Array.isArray(result.data) ? result.data.length : 0;
+      return { ok: true, message: `Carriers synced (${count}).` };
+    }
+
     return { ok: false, message: "Unknown action" };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Error" };
@@ -202,6 +212,13 @@ export function SettingsView() {
             </s-list-item>
           ))}
         </s-unordered-list>
+      </s-section>
+
+      <s-section heading="ShippyPro carriers">
+        <Form method="post">
+          <input type="hidden" name="_action" value="sync_carriers" />
+          <s-button type="submit">Re-sync carriers</s-button>
+        </Form>
       </s-section>
 
       <s-section heading="Order-specific deadline extensions">
