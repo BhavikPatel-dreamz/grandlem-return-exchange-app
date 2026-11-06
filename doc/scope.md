@@ -1091,3 +1091,27 @@ Build after Phases 10–15. These phases **extend** earlier phases – change th
 3. Is there a maximum number of photos and file size per upload?
 4. Which markets require "label immediately" vs "label after approval"?
 5. Who receives admin failure notifications (email address / team inbox)?
+
+---
+
+## Phase 4A – Courier Service Catalog & Return Pickup (≈12h on top of Phase 4)
+
+**Tasks**
+1. Sync courier services: call ShippyPro `GetCarriers`, store every connection and service, re-sync daily and from a "Sync now" button.
+2. Admin list: show each carrier/service, supported capabilities (returns, pickup, QR), and which service returns use (default: same service as original shipment).
+3. Find original courier: when the customer looks up their order, find the original shipment in ShippyPro and save its carrier and service.
+4. Same service for the return: return uses same courier service as the order; shown as fixed info, customer cannot choose another.
+5. Drop-off or courier pickup: if service supports collection, customer can choose pickup with date, time window, and address.
+6. Book collection: create return shipment, then book courier pickup; if booking fails or carrier cannot be booked through API, flag request and email admin team to book manually.
+
+**Database tables added**
+- Courier services (catalog per shop/account)
+- Return pickups (booking details and status)
+
+**Client question**
+- Which carriers support pickup booking via ShippyPro, and who pays for return pickup?
+
+**Notes**
+- ShippyPro API method names must be taken from https://api.shippypro.com/docs#v1 before implementing; this is especially important for pickup booking, which may not be supported by every carrier.
+- Secrets must never be committed: keep `SHIPPYPRO_API_KEY` only in `.env`; `.env` is ignored by git. If an API key was exposed, generate a new one in ShippyPro and replace it.
+
