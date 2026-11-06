@@ -11,16 +11,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim() || "";
   const status = url.searchParams.get("status")?.trim() || "";
+  const type = url.searchParams.get("type")?.trim() || "";
   const carrier = url.searchParams.get("carrier")?.trim() || "";
+  const flagged = url.searchParams.get("flagged")?.trim() || "";
+  const dateFrom = url.searchParams.get("dateFrom")?.trim() || "";
+  const dateTo = url.searchParams.get("dateTo")?.trim() || "";
 
   const where: any = { shop };
   if (status) where.status = status;
+  if (type) where.type = type;
   if (carrier) where.carrierId = carrier;
+  if (flagged === "1") where.reviewFlagged = true;
+  if (dateFrom || dateTo) {
+    where.submittedAt = {};
+    if (dateFrom) where.submittedAt.gte = new Date(dateFrom);
+    if (dateTo) where.submittedAt.lte = new Date(`${dateTo}T23:59:59.999Z`);
+  }
   if (q) {
     where.OR = [
       { orderNumber: { contains: q } },
       { customerEmail: { contains: q } },
       { customerName: { contains: q } },
+      { shopifyOrderId: { contains: q } },
     ];
   }
 
@@ -33,7 +45,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const carriers = await prisma.carrier.findMany({ where: { shop } });
 
-  return { shop, requests, carriers, filters: { q, status, carrier } };
+  return { shop, requests, carriers, filters: { q, status, type, carrier, flagged, dateFrom, dateTo } };
 };
 
 export default function ReturnsListPage() {
@@ -43,7 +55,7 @@ export default function ReturnsListPage() {
     <s-page heading="Return requests">
       <Form method="get" style={{ marginBottom: 16 }}>
         <s-stack direction="inline" gap="base">
-          <s-text-field name="q" label="Search (order/customer)" value={data.filters.q} />
+          <s-text-field name="q" label="Search (order/customer/tracking)" value={data.filters.q} />
           <s-select name="status" label="Status" value={data.filters.status}>
             <s-option value="">All</s-option>
             <s-option value="Submitted">Submitted</s-option>
@@ -54,6 +66,15 @@ export default function ReturnsListPage() {
             <s-option value="Received">Received</s-option>
             <s-option value="Completed">Completed</s-option>
           </s-select>
+          <s-select name="type" label="Type" value={data.filters.type}>
+            <s-option value="">All</s-option>
+            <s-option value="return">Return</s-option>
+            <s-option value="exchange">Exchange</s-option>
+            <s-option value="complaint">Complaint</s-option>
+          </s-select>
+          <s-date-field name="dateFrom" label="From date" value={data.filters.dateFrom} />
+          <s-date-field name="dateTo" label="To date" value={data.filters.dateTo} />
+          <s-checkbox name="flagged" value="1" label="Flagged only" defaultChecked={data.filters.flagged === "1"} />
           <s-button type="submit">Filter</s-button>
         </s-stack>
       </Form>
