@@ -58,7 +58,29 @@ model Settings {
   shop      String   @unique
   returnDeadlineDays    Int      @default(14)
   exchangeDeadlineDays  Int      @default(14)
-  complaintDeadlineDays Int      @default(14)
+  complaintDeadlineDays    Int      @default(14)
+  // Phase 12: refunds
+  autoRefundOnInspection Boolean @default(false)
+  refundShippingCost      Boolean @default(false)
+  // Phase 13: store credit & deflection
+  deflectionEnabled       Boolean @default(true)
+  storeCreditEnabled      Boolean @default(true)
+  storeCreditMethod       String  @default("gift_card") // store_credit | gift_card
+  storeCreditBonusPercent Int     @default(10)
+  storeCreditIssueTiming  String  @default("on_inspection")
+  // Phase 16: complaints
+  complaintResolutionMode String  @default("customer_chooses")
+  complaintRequireItemReturn Boolean @default(true)
+  // Phase 17: advanced exchanges
+  exchangeShipTiming       String  @default("SHIP_IMMEDIATELY")
+  exchangeReserveDays      Int     @default(7)
+  offerCreditWhenUnavailable Boolean @default(true)
+  // Phase 18: smart refunds
+  clawBackFreeItems        Boolean @default(true)
+  // Phase 10: claim evidence requirements
+  claimRequiresPhoto    Boolean  @default(true)
+  claimMinPhotos        Int      @default(1)
+  claimMinCommentLength Int     @default(20)
   // JSON: { "SE": "immediate" | "after_approval", ... }
   labelTimingPerMarket  String   @default("{}")
   // JSON: { "SE": { carrierId, service }, ... } fallback routing per market
@@ -135,6 +157,7 @@ model ReturnRequest {
   shop          String
   shopifyOrderId String?
   orderNumber   String?
+  requestNumber String?
   market        String?
   customerEmail String?
   customerName  String?
@@ -144,6 +167,22 @@ model ReturnRequest {
   reviewFlagged Boolean  @default(false)
   countryCode String @default("")
   outcome ReturnOutcome?
+  // Phase 13
+  requestedResolution     String?
+  // Phase 14: EU withdrawal
+  isWithdrawal           Boolean @default(false)
+  acknowledgementContent  String?
+  finalResolution        String?
+  replacementOrderId     String?
+  itemReturnRequired     Boolean @default(true)
+  // Phase 17
+  draftOrderId           String?
+  reservedUntil          DateTime?
+  withdrawalNotice        WithdrawalNotice? @relation("WithdrawalReturn")
+  deflectionOffered       Boolean @default(false)
+  deflectionAccepted      Boolean @default(false)
+  storeCreditAmount       Float?
+  storeCreditIssuedAt     DateTime?
   rejectionReason String?
   submittedAt   DateTime @default(now())
   approvedAt    DateTime?
@@ -153,6 +192,7 @@ model ReturnRequest {
 
   items         ReturnItem[]
   label         ReturnLabel?
+  refunds       RefundRecord[]
 
   @@index([shop])
   @@index([shop, status])
@@ -176,6 +216,7 @@ model ReturnItem {
   restocked      Boolean  @default(false)
   restockedAt    DateTime?
   restockLocationId String?
+  itemResolution    String?
   // exchange
   replacementVariantId String?
   priceDifferenceStr String? // stored as string e.g. "12.50"
@@ -183,6 +224,7 @@ model ReturnItem {
   updatedAt      DateTime @updatedAt
 
   photos         ReturnPhoto[]
+  inspection     InspectionResult?
 
   @@index([returnRequestId])
 }
@@ -200,6 +242,17 @@ model ReturnPhoto {
   @@index([returnItemId])
 }
 
+model InspectionResult {
+  id             String   @id @default(cuid())
+  returnItemId   String   @unique
+  returnItem     ReturnItem @relation(fields: [returnItemId], references: [id], onDelete: Cascade)
+  condition      String   // OK | DAMAGED | WRONG_ITEM | MISSING
+  approvedQuantity Int    @default(0)
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 model ReturnLabel {
   id            String   @id @default(cuid())
   returnRequestId String @unique
@@ -208,6 +261,7 @@ model ReturnLabel {
   connectionId  String?
   service       String?
   labelUrl      String?
+  qrCodeUrl     String?
   trackingNumber String?
   trackingUrl   String?
   status        String   @default("pending")
@@ -218,6 +272,36 @@ model ReturnLabel {
   events        TrackingEvent[]
 
   @@index([returnRequestId])
+}
+
+model RefundRecord {
+  id             String   @id @default(cuid())
+  returnRequestId String
+  returnRequest  ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  shopifyRefundId String?
+  amount         Float    @default(0)
+  currency       String?
+  status         String   @default("pending") // pending | refunded | failed
+  note           String?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([returnRequestId])
+}
+
+model WithdrawalNotice {
+  id             String   @id @default(cuid())
+  shop           String
+  orderNumber    String?
+  customerName   String?
+  customerEmail  String?
+  content        String
+  withdrawnAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  returnRequestId String? @unique
+  returnRequest   ReturnRequest? @relation("WithdrawalReturn", fields: [returnRequestId], references: [id])
 }
 
 model TrackingEvent {

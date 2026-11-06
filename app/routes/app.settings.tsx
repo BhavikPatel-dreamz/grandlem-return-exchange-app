@@ -40,6 +40,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       returnDeadlineDays: settings.returnDeadlineDays,
       exchangeDeadlineDays: settings.exchangeDeadlineDays,
       complaintDeadlineDays: settings.complaintDeadlineDays,
+      autoRefundOnInspection: settings.autoRefundOnInspection,
+      refundShippingCost: settings.refundShippingCost,
+      claimRequiresPhoto: settings.claimRequiresPhoto,
+      claimMinPhotos: settings.claimMinPhotos,
+      claimMinCommentLength: settings.claimMinCommentLength,
       labelTimingPerMarket: parseJson<Record<string, string>>(settings.labelTimingPerMarket, {}),
       defaultReturnMethodPerMarket: parseJson<Record<string, unknown>>(settings.defaultReturnMethodPerMarket, {}),
     },
@@ -61,6 +66,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         returnDeadlineDays: Number(formData.get("returnDeadlineDays")),
         exchangeDeadlineDays: Number(formData.get("exchangeDeadlineDays")),
         complaintDeadlineDays: Number(formData.get("complaintDeadlineDays")),
+        autoRefundOnInspection: formData.get("autoRefundOnInspection") === "on",
+        refundShippingCost: formData.get("refundShippingCost") === "on",
+        claimRequiresPhoto: formData.get("claimRequiresPhoto") === "on",
+        claimMinPhotos: Number(formData.get("claimMinPhotos")),
+        claimMinCommentLength: Number(formData.get("claimMinCommentLength")),
       });
       return { ok: true, message: "Settings saved" };
     }
@@ -150,6 +160,11 @@ export function SettingsView() {
             <s-number-field name="returnDeadlineDays" label="Return deadline" value={String(data.settings.returnDeadlineDays)} />
             <s-number-field name="exchangeDeadlineDays" label="Exchange deadline" value={String(data.settings.exchangeDeadlineDays)} />
             <s-number-field name="complaintDeadlineDays" label="Complaint deadline" value={String(data.settings.complaintDeadlineDays)} />
+            <s-checkbox name="autoRefundOnInspection" label="Auto refund on inspection" defaultChecked={data.settings.autoRefundOnInspection} />
+            <s-checkbox name="refundShippingCost" label="Include shipping in refunds" defaultChecked={data.settings.refundShippingCost} />
+            <s-checkbox name="claimRequiresPhoto" label="Require photo for complaints" defaultChecked={data.settings.claimRequiresPhoto} />
+            <s-number-field name="claimMinPhotos" label="Minimum photos per complaint item" value={String(data.settings.claimMinPhotos)} />
+            <s-number-field name="claimMinCommentLength" label="Minimum comment length for complaints" value={String(data.settings.claimMinCommentLength)} />
             <s-button type="submit">Save deadlines</s-button>
           </s-stack>
         </Form>

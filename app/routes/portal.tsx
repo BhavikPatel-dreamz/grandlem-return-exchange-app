@@ -6,6 +6,7 @@ import {
   lookupAndValidateOrder,
   portalErrorCodeToMessage,
 } from "../services/portal.server";
+import { getOrCreateSettings } from "../services/settings.server";
 import { createReturnRequest } from "../services/returns.server";
 import { sendEventEmail } from "../services/email.server";
 
@@ -43,6 +44,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ...result, message: portalErrorCodeToMessage(result.code, lang), lang } as const;
     }
 
+    const settings = await getOrCreateSettings(shop);
     const selected = formData.getAll("selected").map(String);
     if (selected.length === 0) {
       return { ok: false, code: "INVALID_INPUT", message: "Select at least one item.", lang } as const;
@@ -75,9 +77,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const comment = commentRaw ? commentRaw : null;
 
       const photos: { url: string; fileName?: string; mimeType?: string; size?: number }[] = [];
-      const file = formData.get(`photo_${id}`);
-      if (file && typeof file !== "string" && (file as File).size > 0) {
-        const f = file as File;
+      const files = formData.getAll(`photo_${id}`);
+      for (const entry of files) {
+        if (!entry || typeof entry === "string") continue;
+        const f = entry as File;
+        if (f.size <= 0) continue;
         if (!f.type.startsWith("image/")) {
           return { ok: false, code: "INVALID_INPUT", message: "Only image files are allowed.", lang } as const;
         }
@@ -85,6 +89,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return { ok: false, code: "INVALID_INPUT", message: "Photo exceeds 5MB limit.", lang } as const;
         }
         photos.push({ url: await fileToDataUrl(f), fileName: f.name, mimeType: f.type, size: f.size });
+      }
+
+      const isComplaint = requestType === "complaint";
+      if (isComplaint && settings.claimRequiresPhoto && photos.length < settings.claimMinPhotos) {
+        return {
+          ok: false,
+          code: "INVALID_INPUT",
+          message: `Complaint requires at least ${settings.claimMinPhotos} photo(s).`,
+          lang,
+        } as const;
+      }
+      if (isComplaint && (comment?.length ?? 0) < settings.claimMinCommentLength) {
+        return {
+          ok: false,
+          code: "INVALID_INPUT",
+          message: `Complaint comment must be at least ${settings.claimMinCommentLength} characters.`,
+          lang,
+        } as const;
       }
 
       items.push({
@@ -124,6 +146,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ok: true,
       created: true,
       requestId: request.id,
+      requestNumber: request.requestNumber,
       orderName: result.order.name,
       lang,
     } as const;
@@ -146,6 +169,10 @@ export default function PortalPage() {
 
   const items = hasOrder ? (actionData as any).order.lineItems ?? [] : [];
   const reasons = hasOrder ? (actionData as any).reasons ?? [] : [];
+  const currentRequestType = hasOrder
+    ? String((actionData as any).requestType ?? "return")
+    : "return";
+  const isComplaint = currentRequestType === "complaint";
 
   return (
     <s-page heading="Returns portal">
@@ -207,8 +234,12 @@ export default function PortalPage() {
                           </s-option>
                         ))}
                       </s-select>
-                      <s-text-field name={`comment_${li.id}`} label="Comment (optional)" />
-                      <input type="file" name={`photo_${li.id}`} accept="image/*" />
+                      <s-text-field
+                        name={`comment_${li.id}`}
+                        label={isComplaint ? "Comment (required for complaints)" : "Comment (optional)"}
+                        required={isComplaint}
+                      />
+                      <input type="file" name={`photo_${li.id}`} accept="image/*" multiple required={isComplaint} />
                     </s-stack>
                   </s-box>
                 );
@@ -221,9 +252,10 @@ export default function PortalPage() {
 
       {created && (
         <s-section heading="Confirmation">
-          <s-paragraph>Your return request has been submitted.</s-paragraph>
-          <s-paragraph>Request ID: {(actionData as any).requestId}</s-paragraph>
+          <s-paragraph>Your return is locked in.</s-paragraph>
+          <s-paragraph>Request number: {(actionData as any).requestNumber || (actionData as any).requestId}</s-paragraph>
           <s-paragraph>Order: {(actionData as any).orderName}</s-paragraph>
+          <s-paragraph>What happens next: show the label/QR at a drop-off, pack the item, and we&apos;ll email you when it reaches our warehouse.</s-paragraph>
         </s-section>
       )}
     </s-page>

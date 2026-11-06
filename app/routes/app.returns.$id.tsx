@@ -8,6 +8,8 @@ import { createReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
 import { autoRestockForRequest, performRestock } from "../services/restock.server";
+import { issueRefund } from "../services/refunds.server";
+import { createReplacementOrder } from "../services/replacement.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -15,7 +17,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const id = params.id!;
   const rr = await prisma.returnRequest.findFirst({
     where: { id, shop },
-    include: { items: { include: { photos: true, reason: true } }, label: { include: { events: true } } },
+    include: { items: { include: { photos: true, reason: true } }, label: { include: { events: true } }, refunds: true },
   });
   if (!rr) throw new Response("Not found", { status: 404 });
   return { rr };
@@ -120,6 +122,24 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       await prisma.returnRequest.update({ where: { id }, data: { status } });
       return { ok: true, message: "Status updated" };
     }
+    if (intent === "set_resolution") {
+      const resolution = String(formData.get("requestedResolution") || "").trim();
+      await prisma.returnRequest.update({ where: { id }, data: { requestedResolution: resolution || null } });
+      return { ok: true, message: "Resolution updated" };
+    }
+    if (intent === "create_replacement") {
+      const result = await createReplacementOrder(shop, id);
+      if (!result.ok) return { ok: false, message: result.error || "Replacement failed" };
+      return { ok: true, message: `Replacement order created: ${result.orderId}` };
+    }
+    if (intent === "issue_refund") {
+      const amountRaw = String(formData.get("refundAmount") || "").trim();
+      const amount = amountRaw ? Number(amountRaw) : undefined;
+      const note = String(formData.get("refundNote") || "").trim();
+      const result = await issueRefund(shop, id, amount, note);
+      if (!result.ok) return { ok: false, message: result.error || "Refund failed" };
+      return { ok: true, message: `Refund issued: ${result.amount}` };
+    }
     return { ok: false, message: "Unknown action" };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Error" };
@@ -135,7 +155,7 @@ export default function ReturnDetailPage() {
       {actionData?.message && <s-banner>{actionData.message}</s-banner>}
 
       <s-section heading="Summary">
-        <s-paragraph>Type: {rr.type}</s-paragraph>
+        <s-paragraph>Type: {rr.type}{rr.isWithdrawal ? " (Withdrawal)" : ""}</s-paragraph>
         <s-paragraph>Status: {rr.status}</s-paragraph>
         <s-paragraph>Customer: {rr.customerEmail}</s-paragraph>
         <s-paragraph>Order: {rr.shopifyOrderId}</s-paragraph>
@@ -230,6 +250,45 @@ export default function ReturnDetailPage() {
         </s-section>
       )}
 
+      <s-section heading="Resolution">
+        <Form method="post">
+          <input type="hidden" name="_action" value="set_resolution" />
+          <s-stack direction="inline" gap="base">
+            <s-select name="requestedResolution" label="Requested resolution" value={rr.requestedResolution || "refund"}>
+              <s-option value="refund">Refund</s-option>
+              <s-option value="store_credit">Store credit</s-option>
+              <s-option value="exchange">Exchange</s-option>
+            </s-select>
+            <s-button type="submit">Save resolution</s-button>
+          </s-stack>
+        </Form>
+        {rr.storeCreditIssuedAt && <s-paragraph>Store credit issued: {rr.storeCreditAmount} on {new Date(rr.storeCreditIssuedAt).toLocaleString()}</s-paragraph>}
+        {rr.replacementOrderId && <s-paragraph>Replacement order: {rr.replacementOrderId}</s-paragraph>}
+        <Form method="post" style={{ marginTop: 8 }}>
+          <input type="hidden" name="_action" value="create_replacement" />
+          <s-button type="submit">Create replacement order</s-button>
+        </Form>
+      </s-section>
+
+      <s-section heading="Refunds">
+        <s-unordered-list>
+          {rr.refunds?.map((r: any) => (
+            <s-list-item key={r.id}>
+              {r.status} – {r.amount} {r.currency} {r.shopifyRefundId ? `(${r.shopifyRefundId})` : ""} {r.note ? `– ${r.note}` : ""} {r.errorMessage ? `– error: ${r.errorMessage}` : ""}
+            </s-list-item>
+          ))}
+          {(!rr.refunds || rr.refunds.length === 0) && <s-paragraph>No refunds issued.</s-paragraph>}
+        </s-unordered-list>
+        <Form method="post">
+          <input type="hidden" name="_action" value="issue_refund" />
+          <s-stack direction="block" gap="base">
+            <s-text-field name="refundAmount" label="Refund amount (leave blank for full calculated)" />
+            <s-text-field name="refundNote" label="Note (required if lowering amount)" />
+            <s-button type="submit">Issue refund</s-button>
+          </s-stack>
+        </Form>
+      </s-section>
+
       <s-section heading="Actions">
         <Form method="post">
           <input type="hidden" name="_action" value="approve" />
@@ -249,6 +308,7 @@ export default function ReturnDetailPage() {
             <s-option value="Label Created">Label Created</s-option>
             <s-option value="In Transit">In Transit</s-option>
             <s-option value="Received">Received</s-option>
+            <s-option value="Inspected">Inspected</s-option>
             <s-option value="Completed">Completed</s-option>
           </s-select>
           <s-button type="submit">Update status</s-button>
