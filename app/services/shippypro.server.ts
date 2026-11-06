@@ -51,6 +51,28 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
         syncedAt: new Date(),
       },
     });
+
+    await prisma.courierService.upsert({
+      where: { shop_shippyproCarrierId_service: { shop, shippyproCarrierId: connectionId, service: c.Service ?? c.service ?? null } },
+      create: {
+        shop,
+        shippyproCarrierId: connectionId,
+        service: c.Service ?? c.service ?? null,
+        supportsReturns: true,
+        supportsPickup: Boolean(c.Pickup ?? c.pickup ?? c.supportsPickup),
+        supportsQr: Boolean(c.QR ?? c.qr ?? c.supportsQr),
+        supportsDropoff: Boolean(c.Dropoff ?? c.dropoff ?? true),
+        meta: JSON.stringify(c),
+        syncedAt: new Date(),
+      },
+      update: {
+        supportsPickup: Boolean(c.Pickup ?? c.pickup ?? c.supportsPickup),
+        supportsQr: Boolean(c.QR ?? c.qr ?? c.supportsQr),
+        supportsDropoff: Boolean(c.Dropoff ?? c.dropoff ?? true),
+        meta: JSON.stringify(c),
+        syncedAt: new Date(),
+      },
+    });
   }
   return { ok: true, data: carriers };
 }
@@ -235,4 +257,30 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
     // ignore
   }
   return { ok: false, error: lastError };
+}
+
+
+export async function requestPickup(
+  returnRequestId: string,
+  preferredDate: Date,
+  timeWindow: string,
+  address: Record<string, unknown>,
+): Promise<{ ok: boolean; status: string; error?: string }> {
+  const rr = await prisma.returnRequest.findUnique({ where: { id: returnRequestId } });
+  if (!rr) return { ok: false, status: "failed", error: "Request not found" };
+
+  // ShippyPro pickup booking APIs vary by carrier and are not verified here.
+  // The request is recorded and flagged for manual/admin booking.
+  await prisma.returnPickup.create({
+    data: {
+      returnRequestId,
+      status: "needs_manual_booking",
+      preferredDate,
+      timeWindow,
+      address: JSON.stringify(address),
+      errorMessage: "Pickup booking not automated; admin must book manually",
+    },
+  });
+  await prisma.returnRequest.update({ where: { id: returnRequestId }, data: { reviewFlagged: true } });
+  return { ok: true, status: "needs_manual_booking" };
 }
