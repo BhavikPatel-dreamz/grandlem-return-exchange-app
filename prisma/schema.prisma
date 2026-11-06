@@ -304,6 +304,41 @@ model WithdrawalNotice {
   returnRequest   ReturnRequest? @relation("WithdrawalReturn", fields: [returnRequestId], references: [id])
 }
 
+model CourierService {
+  id                String   @id @default(cuid())
+  shop              String
+  shippyproCarrierId String
+  service           String?
+  supportsReturns   Boolean  @default(true)
+  supportsPickup    Boolean  @default(false)
+  supportsQr        Boolean  @default(false)
+  supportsDropoff   Boolean  @default(true)
+  meta              String?  // JSON
+  syncedAt          DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([shop])
+  @@unique([shop, shippyproCarrierId, service])
+}
+
+model ReturnPickup {
+  id            String   @id @default(cuid())
+  returnRequestId String
+  status        String   @default("pending") // pending | booked | failed | needs_manual_booking
+  carrierId     String?
+  service       String?
+  preferredDate DateTime?
+  timeWindow    String?
+  address       String?  // JSON
+  shippyproPickupId String?
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([returnRequestId])
+}
+
 model TrackingEvent {
   id            String   @id @default(cuid())
   returnLabelId String?
