@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { useFetcher, Form, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -155,6 +155,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export function SettingsView() {
   const data = useLoaderData<typeof loader>();
+  const [activeTab, setActiveTab] = useState<"general" | "compliance" | "extensions">("general");
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   useEffect(() => {
@@ -163,7 +164,15 @@ export function SettingsView() {
 
   return (
     <s-page heading="Return settings">
-      <s-section heading="Deadlines (days)">
+      <div style={{ marginBottom: 16 }}>
+      <s-stack direction="inline" gap="base">
+        <s-button variant={activeTab === "general" ? "primary" : "tertiary"} onClick={() => setActiveTab("general")}>General</s-button>
+        <s-button variant={activeTab === "compliance" ? "primary" : "tertiary"} onClick={() => setActiveTab("compliance")}>Compliance</s-button>
+        <s-button variant={activeTab === "extensions" ? "primary" : "tertiary"} onClick={() => setActiveTab("extensions")}>Extensions & More</s-button>
+      </s-stack>
+      </div>
+
+      <div style={{ display: activeTab === "general" ? "block" : "none" }}><s-section heading="Deadlines (days)">
         <Form method="post">
           <input type="hidden" name="_action" value="save_settings" />
           <s-stack direction="block" gap="base">
@@ -178,9 +187,9 @@ export function SettingsView() {
             <s-button type="submit">Save deadlines</s-button>
           </s-stack>
         </Form>
-      </s-section>
+      </s-section></div>
 
-      <s-section heading="Return reasons">
+      <div style={{ display: activeTab === "compliance" ? "block" : "none" }}><s-section heading="Return reasons">
         <Form method="post">
           <input type="hidden" name="_action" value="create_reason" />
           <s-stack direction="block" gap="base">
@@ -208,9 +217,9 @@ export function SettingsView() {
             </s-list-item>
           ))}
         </s-unordered-list>
-      </s-section>
+      </s-section></div>
 
-      <s-section heading="Exclusion rules">
+      <div style={{ display: activeTab === "compliance" ? "block" : "none" }}><s-section heading="Exclusion rules">
         <Form method="post">
           <input type="hidden" name="_action" value="create_exclusion" />
           <s-stack direction="block" gap="base">
@@ -237,9 +246,9 @@ export function SettingsView() {
             </s-list-item>
           ))}
         </s-unordered-list>
-      </s-section>
+      </s-section></div>
 
-      <s-section heading="ShippyPro connection">
+      <div style={{ display: activeTab === "general" ? "block" : "none" }}><s-section heading="ShippyPro connection">
         <s-paragraph>{data.shippypro.hasKey ? `Key saved (${data.shippypro.hint || "****"})` : "No per-shop key saved; using SHIPPYPRO_API_KEY env fallback."}</s-paragraph>
         <Form method="post">
           <input type="hidden" name="_action" value="save_shippypro_key" />
@@ -249,16 +258,16 @@ export function SettingsView() {
             <s-button type="submit">Save connection</s-button>
           </s-stack>
         </Form>
-      </s-section>
+      </s-section></div>
 
-      <s-section heading="ShippyPro carriers">
+      <div style={{ display: activeTab === "general" ? "block" : "none" }}><s-section heading="ShippyPro carriers">
         <Form method="post">
           <input type="hidden" name="_action" value="sync_carriers" />
           <s-button type="submit">Re-sync carriers</s-button>
         </Form>
-      </s-section>
+      </s-section></div>
 
-      <s-section heading="Order-specific deadline extensions">
+      <div style={{ display: activeTab === "extensions" ? "block" : "none" }}><s-section heading="Order-specific deadline extensions">
         <Form method="post">
           <input type="hidden" name="_action" value="create_deadline_extension" />
           <s-stack direction="block" gap="base">
@@ -285,7 +294,7 @@ export function SettingsView() {
             </s-list-item>
           ))}
         </s-unordered-list>
-      </s-section>
+      </s-section></div>
     </s-page>
   );
 }
