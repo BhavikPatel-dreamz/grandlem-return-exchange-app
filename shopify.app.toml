@@ -2,7 +2,7 @@
 
 client_id = "9219f4bebaacccf3fa6f956cb0aeb685"
 name = "Grandlem Return  Exchange App\r"
-application_url = "https://example.com"
+application_url = "https://grandlem-return-exchange-app.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -71,8 +71,7 @@ api_version = "2026-10"
   query_filter = "product.status:'ACTIVE'"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://grandlem-return-exchange-app.vercel.app/api/auth" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true
