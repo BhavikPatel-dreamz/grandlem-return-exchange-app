@@ -6,6 +6,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { createReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
+import { sendEventEmail } from "../services/email.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -35,6 +36,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         data: { status: "Approved", approvedAt: new Date() },
       });
       if (!rr.label) await createReturnLabel(id).catch(() => null);
+      const updated = await prisma.returnRequest.findUnique({ where: { id }, include: { label: true } });
+      await sendEventEmail(shop, "approved", "en", rr.customerEmail || "", {
+        customerName: rr.customerEmail || "customer",
+        orderNumber: rr.orderNumber,
+        labelLink: updated?.label?.labelUrl || "",
+        trackingLink: updated?.label?.trackingUrl || "",
+      }).catch(() => null);
       return { ok: true, message: "Request approved" };
     }
     if (intent === "reject") {
@@ -43,6 +51,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         where: { id },
         data: { status: "Rejected", rejectedAt: new Date(), rejectionReason: reason },
       });
+      await sendEventEmail(shop, "rejected", "en", rr.customerEmail || "", {
+        customerName: rr.customerEmail || "customer",
+        orderNumber: rr.orderNumber,
+        reason,
+      }).catch(() => null);
       return { ok: true, message: "Request rejected" };
     }
     if (intent === "regenerate_label") {
@@ -76,6 +89,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     if (intent === "exchange_payment_link") {
       const result = await createExchangePaymentLink(shop, id, rr.customerEmail);
+      if (result.required) {
+        await sendEventEmail(shop, "payment_required", "en", rr.customerEmail || "", {
+          customerName: rr.customerEmail || "customer",
+          orderNumber: rr.orderNumber,
+          amount: result.total.toFixed(2),
+          paymentLink: result.invoiceUrl || "",
+        }).catch(() => null);
+      }
       if (!result.required) {
         await prisma.returnRequest.update({ where: { id }, data: { status: "Approved" } }).catch(() => null);
         return { ok: true, message: `No price difference (${result.total.toFixed(2)}). Exchange approved.` };

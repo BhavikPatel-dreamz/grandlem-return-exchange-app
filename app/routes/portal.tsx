@@ -7,6 +7,7 @@ import {
   portalErrorCodeToMessage,
 } from "../services/portal.server";
 import { createReturnRequest } from "../services/returns.server";
+import { sendEventEmail } from "../services/email.server";
 
 const MAX_PHOTO_SIZE = 5 * 1024 * 1024;
 
@@ -112,6 +113,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: requestType,
       items,
     });
+
+    await sendEventEmail(shop, "received", lang, result.order.email || "", {
+      customerName: result.order.email || "customer",
+      orderNumber: result.order.name,
+      items: items.map((it) => it.title).join(", "),
+    }).catch(() => null);
 
     return {
       ok: true,
