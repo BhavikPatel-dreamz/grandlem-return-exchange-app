@@ -7,6 +7,7 @@ import prisma from "../db.server";
 import { createReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
+import { autoRestockForRequest, performRestock } from "../services/restock.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -36,6 +37,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         data: { status: "Approved", approvedAt: new Date() },
       });
       if (!rr.label) await createReturnLabel(id).catch(() => null);
+      await autoRestockForRequest(id).catch(() => null);
       const updated = await prisma.returnRequest.findUnique({ where: { id }, include: { label: true } });
       await sendEventEmail(shop, "approved", "en", rr.customerEmail || "", {
         customerName: rr.customerEmail || "customer",
@@ -74,8 +76,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const restocked = formData.get("restocked") === "on";
       await prisma.returnItem.update({
         where: { id: itemId },
-        data: { restockDecision: decision, restocked, restockedAt: restocked ? new Date() : null },
+        data: { restockDecision: decision },
       });
+      if (restocked) {
+        const result = await performRestock(shop, itemId);
+        if (!result.ok) return { ok: false, message: result.error || "Restock failed" };
+      } else {
+        await prisma.returnItem.update({ where: { id: itemId }, data: { restocked: false, restockedAt: null } });
+      }
       return { ok: true, message: "Restock updated" };
     }
     if (intent === "exchange_set_replacements") {
