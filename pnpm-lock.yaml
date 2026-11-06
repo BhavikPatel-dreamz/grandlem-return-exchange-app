@@ -4,6 +4,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  p-map: ^4.0.0
+  qs: ^6.16.0
+
 importers:
 
   .:
@@ -2946,10 +2950,6 @@ packages:
     resolution: {integrity: sha512-/bjOqmgETBYB5BoEeGVea8dmvHb2m9GLy1E9W43yeyfP6QQCZGFNa+XRceJEuDB6zqr+gKpIAmlLebMpykw/MQ==}
     engines: {node: '>=10'}
 
-  p-map@7.1.1:
-    resolution: {integrity: sha512-6Lh3jQPLthYujSrlw6ccWXBGZTkoTCz27Hd92g79LH/kjAbgoEu0t442cCCNbegPSJsA0lwDX8z0bcKtkpA32g==}
-    engines: {node: '>=18'}
-
   param-case@3.0.4:
     resolution: {integrity: sha512-RXlj7zCYokReqWpOPH9oYivUzLYZ5vAPIfEmCTNViosC78F8F0H9y7T7gG2M39ymgutxF5gcFEsyZQSph9Bp3A==}
 
@@ -4772,7 +4772,7 @@ snapshots:
       isbot: 5.2.2
       jsesc: 3.0.2
       lodash: 4.18.1
-      p-map: 7.1.1
+      p-map: 4.0.0
       pathe: 1.1.2
       picocolors: 1.1.1
       pkg-types: 2.4.0
@@ -6981,8 +6981,6 @@ snapshots:
   p-map@4.0.0:
     dependencies:
       aggregate-error: 3.1.0
-
-  p-map@7.1.1: {}
 
   param-case@3.0.4:
     dependencies:
