@@ -15,8 +15,9 @@ if (
   delete process.env.HOST;
 }
 
-const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost")
-  .hostname;
+let shopifyAppUrl = process.env.SHOPIFY_APP_URL || "http://localhost";
+if (!/^https?:\/\//i.test(shopifyAppUrl)) shopifyAppUrl = `https://${shopifyAppUrl}`;
+const host = new URL(shopifyAppUrl).hostname;
 
 let hmrConfig;
 if (host === "localhost") {
