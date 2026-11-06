@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { createReturnLabel } from "../services/shippypro.server";
+import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -15,15 +16,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     include: { items: { include: { photos: true, reason: true } }, label: { include: { events: true } } },
   });
   if (!rr) throw new Response("Not found", { status: 404 });
-  const carriers = await prisma.carrier.findMany({ where: { shop } });
-  return { rr, carriers, shop };
+  return { rr };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const id = params.id!;
-  const rr = await prisma.returnRequest.findFirst({ where: { id, shop } });
+  const rr = await prisma.returnRequest.findFirst({ where: { id, shop }, include: { items: true, label: true } });
   if (!rr) return { ok: false, message: "Request not found" };
   const formData = await request.formData();
   const intent = String(formData.get("_action") || "");
@@ -65,6 +65,27 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       return { ok: true, message: "Restock updated" };
     }
+    if (intent === "exchange_set_replacements") {
+      const items = rr.items;
+      const reps = items.map((it: any) => ({
+        returnItemId: it.id,
+        replacementVariantId: String(formData.get(`replacement_${it.id}`) || "").trim(),
+      })).filter((r: any) => r.replacementVariantId);
+      const total = await applyReplacementVariants(id, reps);
+      return { ok: true, message: `Replacements saved. Price difference total: ${total.toFixed(2)}` };
+    }
+    if (intent === "exchange_payment_link") {
+      const result = await createExchangePaymentLink(shop, id, rr.customerEmail);
+      if (!result.required) {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "Approved" } }).catch(() => null);
+        return { ok: true, message: `No price difference (${result.total.toFixed(2)}). Exchange approved.` };
+      }
+      return { ok: true, message: `Payment link created: ${result.invoiceUrl}` };
+    }
+    if (intent === "exchange_mark_paid") {
+      await markExchangePaid(id);
+      return { ok: true, message: "Exchange marked as paid" };
+    }
     if (intent === "status_update") {
       const status = String(formData.get("status") || rr.status);
       await prisma.returnRequest.update({ where: { id }, data: { status } });
@@ -77,7 +98,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ReturnDetailPage() {
-  const { rr, carriers } = useLoaderData<typeof loader>();
+  const { rr } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
 
   return (
@@ -103,7 +124,7 @@ export default function ReturnDetailPage() {
               <Form method="post" style={{ display: "inline", marginLeft: 8 }}>
                 <input type="hidden" name="_action" value="restock_update" />
                 <input type="hidden" name="itemId" value={it.id} />
-                <s-select name="restockDecision" defaultValue={it.restockDecision || "pending"}>
+                <s-select name="restockDecision" value={it.restockDecision || "pending"}>
                   <s-option value="auto">Auto</s-option>
                   <s-option value="manual">Manual</s-option>
                   <s-option value="no">No restock</s-option>
@@ -151,6 +172,34 @@ export default function ReturnDetailPage() {
           </Form>
         )}
       </s-section>
+
+      {rr.type === "exchange" && (
+        <s-section heading="Exchange">
+          <Form method="post">
+            <input type="hidden" name="_action" value="exchange_set_replacements" />
+            <s-stack direction="block" gap="base">
+              {rr.items.map((it: any) => (
+                <s-box key={it.id} padding="base" borderWidth="base" borderRadius="base">
+                  <s-paragraph>{it.title} x{it.returnedQuantity}</s-paragraph>
+                  <s-text-field name={`replacement_${it.id}`} label="Replacement variant ID (GID/numeric)" value={it.replacementVariantId || ""} />
+                  {it.priceDifferenceStr && <s-paragraph>Price difference: {it.priceDifferenceStr}</s-paragraph>}
+                </s-box>
+              ))}
+              <s-button type="submit">Save replacements</s-button>
+            </s-stack>
+          </Form>
+          <Form method="post">
+            <input type="hidden" name="_action" value="exchange_payment_link" />
+            <s-button type="submit">Create payment link / approve</s-button>
+          </Form>
+          {rr.status === "Awaiting Payment" && (
+            <Form method="post">
+              <input type="hidden" name="_action" value="exchange_mark_paid" />
+              <s-button type="submit">Mark as paid</s-button>
+            </Form>
+          )}
+        </s-section>
+      )}
 
       <s-section heading="Actions">
         <Form method="post">
