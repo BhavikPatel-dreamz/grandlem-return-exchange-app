@@ -5,9 +5,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "sqlite"
   url      = "file:dev.sqlite"
@@ -31,4 +28,204 @@ model Session {
   emailVerified Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+// ---- Phase 1: Returns data model ----
+
+model ReturnReason {
+  id        String   @id @default(cuid())
+  shop      String
+  labelEn   String
+  labelSv   String   @default("")
+  // return | exchange | complaint | any (comma list) - simplified as string
+  appliesTo String   @default("return,exchange,complaint")
+  autoRestock Boolean @default(false)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items     ReturnItem[]
+
+  @@index([shop])
+  @@index([shop, active])
+}
+
+model Settings {
+  id        String   @id @default(cuid())
+  shop      String   @unique
+  returnDeadlineDays    Int      @default(14)
+  exchangeDeadlineDays  Int      @default(14)
+  complaintDeadlineDays Int      @default(14)
+  // JSON: { "SE": "immediate" | "after_approval", ... }
+  labelTimingPerMarket  String   @default("{}")
+  // JSON: { "SE": { carrierId, service }, ... } fallback routing per market
+  defaultReturnMethodPerMarket String @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DeadlineExtension {
+  id        String   @id @default(cuid())
+  shop      String
+  shopifyOrderId String
+  type      String   // return | exchange | complaint
+  newDeadline DateTime
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop, shopifyOrderId])
+  @@unique([shop, shopifyOrderId, type])
+}
+
+model ExclusionRule {
+  id             String   @id @default(cuid())
+  shop           String
+  targetType     String   // collection | product | variant
+  targetId       String   // Shopify GID or numeric id
+  appliesToReturns    Boolean @default(true)
+  appliesToExchanges  Boolean @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, targetType, targetId])
+  @@unique([shop, targetType, targetId])
+}
+
+model Carrier {
+  id              String   @id @default(cuid())
+  shop            String
+  shippyproCarrierId String
+  name            String
+  service         String?
+  isDefault       Boolean  @default(false)
+  market          String?
+  meta            String?  // JSON
+  syncedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, shippyproCarrierId])
+  @@index([shop])
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  shop      String
+  event     String   // received | approved | rejected | payment_required
+  language  String   // en | sv
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, event, language])
+  @@index([shop])
+}
+
+model ReturnRequest {
+  id            String   @id @default(cuid())
+  shop          String
+  shopifyOrderId String?
+  orderNumber   String?
+  market        String?
+  customerEmail String?
+  customerName  String?
+  type          String   // return | exchange | complaint
+  status        String   @default("Submitted")
+  carrierId     String?
+  reviewFlagged Boolean  @default(false)
+  rejectionReason String?
+  submittedAt   DateTime @default(now())
+  approvedAt    DateTime?
+  rejectedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         ReturnItem[]
+  label         ReturnLabel?
+
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, shopifyOrderId])
+}
+
+model ReturnItem {
+  id             String   @id @default(cuid())
+  returnRequestId String
+  returnRequest  ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  shopifyLineItemId String?
+  productId      String?
+  variantId      String?
+  title          String?
+  quantity       Int      @default(1)
+  returnedQuantity Int    @default(0)
+  reasonId       String?
+  reason         ReturnReason? @relation(fields: [reasonId], references: [id], onDelete: SetNull)
+  comment        String?
+  restockDecision String?  // auto | manual | pending
+  restocked      Boolean  @default(false)
+  restockedAt    DateTime?
+  restockLocationId String?
+  // exchange
+  replacementVariantId String?
+  priceDifferenceStr String? // stored as string e.g. "12.50"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  photos         ReturnPhoto[]
+
+  @@index([returnRequestId])
+}
+
+model ReturnPhoto {
+  id         String   @id @default(cuid())
+  returnItemId String
+  returnItem ReturnItem @relation(fields: [returnItemId], references: [id], onDelete: Cascade)
+  url        String
+  fileName   String?
+  mimeType   String?
+  size       Int?
+  createdAt  DateTime @default(now())
+
+  @@index([returnItemId])
+}
+
+model ReturnLabel {
+  id            String   @id @default(cuid())
+  returnRequestId String @unique
+  returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  carrierId     String?
+  connectionId  String?
+  service       String?
+  labelUrl      String?
+  trackingNumber String?
+  trackingUrl   String?
+  status        String   @default("pending")
+  customsData   String?  // JSON
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  events        TrackingEvent[]
+
+  @@index([returnRequestId])
+}
+
+model TrackingEvent {
+  id            String   @id @default(cuid())
+  returnLabelId String?
+  returnLabel   ReturnLabel? @relation(fields: [returnLabelId], references: [id], onDelete: Cascade)
+  returnRequestId String?
+  status        String
+  message       String?
+  occurredAt    DateTime @default(now())
+  raw           String?  // JSON
+  createdAt     DateTime @default(now())
+
+  @@index([returnLabelId])
+  @@index([returnRequestId])
 }
