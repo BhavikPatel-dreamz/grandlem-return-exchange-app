@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -45,82 +46,110 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+const EVENT_OPTIONS = [
+  "received", "approved", "rejected", "payment_required", "refund_issued",
+  "item_received", "replacement_sent", "store_credit_issued", "withdrawal",
+];
+
 export default function EmailTemplatesPage() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+
+  const [mode, setMode] = useState<"list" | "create" | "edit">("list");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
 
   return (
     <s-page heading="Email templates">
       {actionData?.message && <s-banner>{actionData.message}</s-banner>}
 
-      <s-section heading="Templates">
-        {data.templates.map((t: any) => (
-          <s-box key={t.id} padding="base" borderWidth="base" borderRadius="base">
-            <Form method="post">
-              <input type="hidden" name="_action" value="save_template" />
-              <input type="hidden" name="id" value={t.id} />
-              <s-stack direction="block" gap="base">
-                <s-select name="event" label="Event" value={t.event}>
-                  <s-option value="received">received</s-option>
-                  <s-option value="approved">approved</s-option>
-                  <s-option value="rejected">rejected</s-option>
-                  <s-option value="payment_required">payment_required</s-option>
-                  <s-option value="refund_issued">refund_issued</s-option>
-                  <s-option value="item_received">item_received</s-option>
-                  <s-option value="replacement_sent">replacement_sent</s-option>
-                  <s-option value="store_credit_issued">store_credit_issued</s-option>
-                  <s-option value="withdrawal">withdrawal</s-option>
-                </s-select>
-                <s-select name="language" label="Language" value={t.language}>
-                  <s-option value="en">English</s-option>
-                  <s-option value="sv">Swedish</s-option>
-                </s-select>
-                <s-text-field name="subject" label="Subject" value={t.subject} />
-                <s-text-area name="body" label="Body" value={t.body} />
-                <s-button type="submit">Save</s-button>
-              </s-stack>
-            </Form>
-            <Form method="post">
-              <input type="hidden" name="_action" value="test_send" />
-              <input type="hidden" name="subject" value={t.subject} />
-              <input type="hidden" name="body" value={t.body} />
-              <s-text-field name="testEmail" label="Test email address" />
-              <s-button type="submit" variant="tertiary">Test send</s-button>
-            </Form>
-            <Form method="post" style={{ marginTop: 8 }}>
-              <input type="hidden" name="_action" value="delete_template" />
-              <input type="hidden" name="id" value={t.id} />
-              <s-button type="submit" variant="tertiary">Delete</s-button>
-            </Form>
-          </s-box>
-        ))}
-      </s-section>
+      {mode === "list" && (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <s-button onClick={() => setMode("create")}>Add template</s-button>
+          </div>
+          <s-section heading={`Templates (${data.templates.length})`}>
+            {data.templates.length === 0 && <s-paragraph>No templates yet. Create one.</s-paragraph>}
+            <s-stack direction="block" gap="base">
+              {data.templates.map((t: any) => (
+                <s-box key={t.id} padding="base" borderWidth="base" borderRadius="base">
+                  <s-stack direction="block" gap="base">
+                    <s-paragraph><strong>{t.event}</strong> ({t.language})</s-paragraph>
+                    <s-paragraph>{t.subject}</s-paragraph>
+                    <s-stack direction="inline" gap="base">
+                      <s-button onClick={() => { setEditingId(t.id); setMode("edit"); }}>Edit</s-button>
+                      <Form method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="_action" value="delete_template" />
+                        <input type="hidden" name="id" value={t.id} />
+                        <s-button type="submit" variant="tertiary">Delete</s-button>
+                      </Form>
+                    </s-stack>
+                  </s-stack>
+                </s-box>
+              ))}
+            </s-stack>
+          </s-section>
+        </>
+      )}
 
-      <s-section heading="New template">
-        <Form method="post">
-          <input type="hidden" name="_action" value="save_template" />
-          <s-stack direction="block" gap="base">
-            <s-select name="event" label="Event">
-              <s-option value="received">received</s-option>
-              <s-option value="approved">approved</s-option>
-              <s-option value="rejected">rejected</s-option>
-              <s-option value="payment_required">payment_required</s-option>
-              <s-option value="refund_issued">refund_issued</s-option>
-              <s-option value="item_received">item_received</s-option>
-              <s-option value="replacement_sent">replacement_sent</s-option>
-              <s-option value="store_credit_issued">store_credit_issued</s-option>
-              <s-option value="withdrawal">withdrawal</s-option>
-            </s-select>
-            <s-select name="language" label="Language">
-              <s-option value="en">English</s-option>
-              <s-option value="sv">Swedish</s-option>
-            </s-select>
-            <s-text-field name="subject" label="Subject" />
-            <s-text-area name="body" label="Body" />
-            <s-button type="submit">Create</s-button>
-          </s-stack>
-        </Form>
-      </s-section>
+      {mode === "create" && (
+        <s-section heading="New template">
+          <Form method="post">
+            <input type="hidden" name="_action" value="save_template" />
+            <s-stack direction="block" gap="base">
+              <s-select name="event" label="Event">
+                {EVENT_OPTIONS.map((e) => <s-option key={e} value={e}>{e}</s-option>)}
+              </s-select>
+              <s-select name="language" label="Language">
+                <s-option value="en">English</s-option>
+                <s-option value="sv">Swedish</s-option>
+              </s-select>
+              <s-text-field name="subject" label="Subject" />
+              <s-text-area name="body" label="Body" />
+              <s-stack direction="inline" gap="base">
+                <s-button type="submit">Create</s-button>
+                <s-button variant="tertiary" onClick={() => setMode("list")}>Cancel</s-button>
+              </s-stack>
+            </s-stack>
+          </Form>
+        </s-section>
+      )}
+
+      {mode === "edit" && editingTemplate && (
+        <s-section heading={`Edit template: ${editingTemplate.event} (${editingTemplate.language})`}>
+          <Form method="post">
+            <input type="hidden" name="_action" value="save_template" />
+            <input type="hidden" name="id" value={editingTemplate.id} />
+            <s-stack direction="block" gap="base">
+              <s-select name="event" label="Event" value={editingTemplate.event}>
+                {EVENT_OPTIONS.map((e) => <s-option key={e} value={e}>{e}</s-option>)}
+              </s-select>
+              <s-select name="language" label="Language" value={editingTemplate.language}>
+                <s-option value="en">English</s-option>
+                <s-option value="sv">Swedish</s-option>
+              </s-select>
+              <s-text-field name="subject" label="Subject" value={editingTemplate.subject} />
+              <s-text-area name="body" label="Body" value={editingTemplate.body} />
+              <s-stack direction="inline" gap="base">
+                <s-button type="submit">Save</s-button>
+                <s-button variant="tertiary" onClick={() => { setMode("list"); setEditingId(null); }}>Back to list</s-button>
+              </s-stack>
+            </s-stack>
+          </Form>
+          <Form method="post" style={{ marginTop: 8 }}>
+            <input type="hidden" name="_action" value="test_send" />
+            <input type="hidden" name="subject" value={editingTemplate.subject} />
+            <input type="hidden" name="body" value={editingTemplate.body} />
+            <s-text-field name="testEmail" label="Test email address" />
+            <s-button type="submit" variant="tertiary">Test send</s-button>
+          </Form>
+          <Form method="post" style={{ marginTop: 8 }}>
+            <input type="hidden" name="_action" value="delete_template" />
+            <input type="hidden" name="id" value={editingTemplate.id} />
+            <s-button type="submit" variant="tertiary">Delete</s-button>
+          </Form>
+        </s-section>
+      )}
     </s-page>
   );
 }
