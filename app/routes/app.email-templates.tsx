@@ -60,8 +60,21 @@ export default function EmailTemplatesPage() {
               <input type="hidden" name="_action" value="save_template" />
               <input type="hidden" name="id" value={t.id} />
               <s-stack direction="block" gap="base">
-                <s-text-field name="event" label="Event" value={t.event} />
-                <s-text-field name="language" label="Language" value={t.language} />
+                <s-select name="event" label="Event" value={t.event}>
+                  <s-option value="received">received</s-option>
+                  <s-option value="approved">approved</s-option>
+                  <s-option value="rejected">rejected</s-option>
+                  <s-option value="payment_required">payment_required</s-option>
+                  <s-option value="refund_issued">refund_issued</s-option>
+                  <s-option value="item_received">item_received</s-option>
+                  <s-option value="replacement_sent">replacement_sent</s-option>
+                  <s-option value="store_credit_issued">store_credit_issued</s-option>
+                  <s-option value="withdrawal">withdrawal</s-option>
+                </s-select>
+                <s-select name="language" label="Language" value={t.language}>
+                  <s-option value="en">English</s-option>
+                  <s-option value="sv">Swedish</s-option>
+                </s-select>
                 <s-text-field name="subject" label="Subject" value={t.subject} />
                 <s-text-area name="body" label="Body" value={t.body} />
                 <s-button type="submit">Save</s-button>
@@ -87,8 +100,21 @@ export default function EmailTemplatesPage() {
         <Form method="post">
           <input type="hidden" name="_action" value="save_template" />
           <s-stack direction="block" gap="base">
-            <s-text-field name="event" label="Event" />
-            <s-text-field name="language" label="Language" />
+            <s-select name="event" label="Event">
+              <s-option value="received">received</s-option>
+              <s-option value="approved">approved</s-option>
+              <s-option value="rejected">rejected</s-option>
+              <s-option value="payment_required">payment_required</s-option>
+              <s-option value="refund_issued">refund_issued</s-option>
+              <s-option value="item_received">item_received</s-option>
+              <s-option value="replacement_sent">replacement_sent</s-option>
+              <s-option value="store_credit_issued">store_credit_issued</s-option>
+              <s-option value="withdrawal">withdrawal</s-option>
+            </s-select>
+            <s-select name="language" label="Language">
+              <s-option value="en">English</s-option>
+              <s-option value="sv">Swedish</s-option>
+            </s-select>
             <s-text-field name="subject" label="Subject" />
             <s-text-area name="body" label="Body" />
             <s-button type="submit">Create</s-button>
