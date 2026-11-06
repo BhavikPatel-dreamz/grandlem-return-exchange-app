@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -50,6 +50,48 @@ const EVENT_OPTIONS = [
   "received", "approved", "rejected", "payment_required", "refund_issued",
   "item_received", "replacement_sent", "store_credit_issued", "withdrawal",
 ];
+
+function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const hiddenRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editorRef.current) editorRef.current.innerHTML = initial || "";
+    if (hiddenRef.current) hiddenRef.current.value = initial || "";
+  }, [initial]);
+
+  const sync = () => {
+    if (editorRef.current && hiddenRef.current) hiddenRef.current.value = editorRef.current.innerHTML;
+  };
+
+  const exec = (command: string, value?: string) => {
+    document.execCommand(command, false, value);
+    sync();
+  };
+
+  return (
+    <div style={{ border: "1px solid #ccc", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 8, padding: 8, borderBottom: "1px solid #ddd", background: "#f7f7f7", flexWrap: "wrap" }}>
+        <button type="button" onClick={() => exec("bold")}><strong>B</strong></button>
+        <button type="button" onClick={() => exec("italic")}><em>I</em></button>
+        <button type="button" onClick={() => exec("underline")}><u>U</u></button>
+        <button type="button" onClick={() => exec("insertUnorderedList")}>• List</button>
+        <button type="button" onClick={() => {
+          const url = window.prompt("Link URL");
+          if (url) exec("createLink", url);
+        }}>Link</button>
+        <button type="button" onClick={() => exec("undo")}>Undo</button>
+      </div>
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={sync}
+        style={{ minHeight: 180, padding: 12, outline: "none" }}
+      />
+      <input ref={hiddenRef} type="hidden" name={name} defaultValue={initial || ""} />
+    </div>
+  );
+}
 
 export default function EmailTemplatesPage() {
   const data = useLoaderData<typeof loader>();
@@ -105,7 +147,7 @@ export default function EmailTemplatesPage() {
                 <s-option value="sv">Swedish</s-option>
               </s-select>
               <s-text-field name="subject" label="Subject" />
-              <s-text-area name="body" label="Body" />
+              <RichTextEditor name="body" />
               <s-stack direction="inline" gap="base">
                 <s-button type="submit">Create</s-button>
                 <s-button variant="tertiary" onClick={() => setMode("list")}>Cancel</s-button>
@@ -129,7 +171,7 @@ export default function EmailTemplatesPage() {
                 <s-option value="sv">Swedish</s-option>
               </s-select>
               <s-text-field name="subject" label="Subject" value={editingTemplate.subject} />
-              <s-text-area name="body" label="Body" value={editingTemplate.body} />
+              <RichTextEditor name="body" initial={editingTemplate.body} />
               <s-stack direction="inline" gap="base">
                 <s-button type="submit">Save</s-button>
                 <s-button variant="tertiary" onClick={() => { setMode("list"); setEditingId(null); }}>Back to list</s-button>
