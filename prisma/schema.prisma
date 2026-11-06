@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
 }
 
 model Session {
@@ -142,6 +142,8 @@ model ReturnRequest {
   status        String   @default("Submitted")
   carrierId     String?
   reviewFlagged Boolean  @default(false)
+  countryCode String @default("")
+  outcome ReturnOutcome?
   rejectionReason String?
   submittedAt   DateTime @default(now())
   approvedAt    DateTime?
@@ -231,4 +233,25 @@ model TrackingEvent {
 
   @@index([returnLabelId])
   @@index([returnRequestId])
+}
+
+
+model DailyOrderStat {
+  id             String   @id @default(cuid())
+  shop           String
+  date           DateTime
+  marketCode     String   @default("")
+  fulfilledOrders Int     @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shop, date, marketCode])
+  @@index([shop, date])
+}
+
+
+enum ReturnOutcome {
+  REFUND
+  EXCHANGE_VARIANT
+  STORE_CREDIT
 }
