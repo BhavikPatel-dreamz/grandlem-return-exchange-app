@@ -84,6 +84,7 @@ export default function ReturnsListPage() {
           {data.requests.map((r: any) => (
             <s-list-item key={r.id}>
               {r.reviewFlagged ? "⚠ " : ""}
+              {r.isWithdrawal ? "🛑 Withdrawal " : ""}
               <s-link href={`/app/returns/${r.id}`}>
                 {r.orderNumber || r.shopifyOrderId}
               </s-link>{" "}

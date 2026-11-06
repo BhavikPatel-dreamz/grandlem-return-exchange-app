@@ -25,11 +25,15 @@ export type CreateReturnRequestInput = {
 export async function createReturnRequest(input: CreateReturnRequestInput) {
   if (input.items.length === 0) throw new Error("No items selected.");
 
+  const existingCount = await prisma.returnRequest.count({ where: { shop: input.shop } });
+  const requestNumber = `GLM-${1001 + existingCount}`;
+
   const request = await prisma.returnRequest.create({
     data: {
       shop: input.shop,
       shopifyOrderId: input.shopifyOrderId,
       orderNumber: input.orderNumber ?? null,
+      requestNumber,
       market: input.market ?? null,
       customerEmail: input.customerEmail ?? null,
       customerName: input.customerName ?? null,
