@@ -25,7 +25,7 @@ import {
   upsertDeadlineExtension,
   deleteDeadlineExtension,
 } from "../services/deadline-extensions.server";
-import { syncCarriers } from "../services/shippypro.server";
+import { syncCarriers, setShippyproApiKey, getShippyproConnection } from "../services/shippypro.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -51,6 +51,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     reasons,
     exclusions,
     deadlineExtensions,
+    shippypro: await getShippyproConnection(shop),
   };
 };
 
@@ -134,6 +135,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       const count = Array.isArray(result.data) ? result.data.length : 0;
       return { ok: true, message: `Carriers synced (${count}).` };
+    }
+
+    if (intent === "save_shippypro_key") {
+      await setShippyproApiKey(
+        shop,
+        String(formData.get("shippyproApiKey") || ""),
+        String(formData.get("shippyproApiUrl") || "").trim() || null,
+      );
+      return { ok: true, message: "ShippyPro connection saved" };
     }
 
     return { ok: false, message: "Unknown action" };
@@ -227,6 +237,18 @@ export function SettingsView() {
             </s-list-item>
           ))}
         </s-unordered-list>
+      </s-section>
+
+      <s-section heading="ShippyPro connection">
+        <s-paragraph>{data.shippypro.hasKey ? `Key saved (${data.shippypro.hint || "****"})` : "No per-shop key saved; using SHIPPYPRO_API_KEY env fallback."}</s-paragraph>
+        <Form method="post">
+          <input type="hidden" name="_action" value="save_shippypro_key" />
+          <s-stack direction="block" gap="base">
+            <s-text-field name="shippyproApiKey" label="ShippyPro API key" />
+            <s-text-field name="shippyproApiUrl" label="ShippyPro API URL (optional)" value={data.shippypro.apiUrl || ""} />
+            <s-button type="submit">Save connection</s-button>
+          </s-stack>
+        </Form>
       </s-section>
 
       <s-section heading="ShippyPro carriers">

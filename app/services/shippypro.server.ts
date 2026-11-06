@@ -2,14 +2,29 @@
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { getOrCreateSettings, parseJson } from "./settings.server";
+import { decryptSecret, encryptSecret } from "./crypto.server";
 
 const SHIPPYPRO_URL = process.env.SHIPPYPRO_API_URL || "https://www.shippypro.com/api";
 const SHIPPYPRO_KEY = process.env.SHIPPYPRO_API_KEY || "";
 
 export type ShippyProResult = { ok: boolean; data?: any; error?: string };
 
-export async function shippyproCall(method: string, params: Record<string, unknown> = {}): Promise<ShippyProResult> {
-  if (!SHIPPYPRO_KEY) {
+export async function resolveShippyProApiKey(shop?: string | null): Promise<string> {
+  if (shop) {
+    try {
+      const settings = await getOrCreateSettings(shop);
+      const decrypted = decryptSecret(settings.shippyproApiKeyEncrypted);
+      if (decrypted) return decrypted;
+    } catch {
+      // fall back to env
+    }
+  }
+  return process.env.SHIPPYPRO_API_KEY || "";
+}
+
+export async function shippyproCall(method: string, params: Record<string, unknown> = {}, shop?: string | null): Promise<ShippyProResult> {
+  const apiKey = await resolveShippyProApiKey(shop);
+  if (!apiKey) {
     return { ok: false, error: "SHIPPYPRO_API_KEY not configured" };
   }
   try {
@@ -27,7 +42,7 @@ export async function shippyproCall(method: string, params: Record<string, unkno
 }
 
 export async function syncCarriers(shop: string): Promise<ShippyProResult> {
-  const result = await shippyproCall("GetCarriers", {});
+  const result = await shippyproCall("GetCarriers", {}, shop);
   if (!result.ok) return result;
 
   const carriers = Array.isArray(result.data?.result) ? result.data.result : result.data?.carriers || [];
@@ -79,7 +94,7 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
 
 export async function findOriginalShipment(shop: string, orderNumber: string | null) {
   if (!orderNumber) return null;
-  const result = await shippyproCall("GetShippedOrders", { OrderID: orderNumber });
+  const result = await shippyproCall("GetShippedOrders", { OrderID: orderNumber }, shop);
   if (!result.ok) return null;
   const list = Array.isArray(result.data?.result) ? result.data.result : result.data?.orders || [];
   return list?.[0] ?? null;
@@ -195,7 +210,7 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
         Customs: customs,
       };
 
-      const shipResult = await shippyproCall("Ship", params);
+      const shipResult = await shippyproCall("Ship", params, rr.shop);
       if (!shipResult.ok) throw new Error(shipResult.error || "Ship call failed");
 
       const data = shipResult.data?.result || shipResult.data;
@@ -283,4 +298,34 @@ export async function requestPickup(
   });
   await prisma.returnRequest.update({ where: { id: returnRequestId }, data: { reviewFlagged: true } });
   return { ok: true, status: "needs_manual_booking" };
+}
+
+
+export async function setShippyproApiKey(shop: string, apiKey: string, apiUrl?: string | null): Promise<void> {
+  const trimmed = apiKey.trim();
+  const hint = trimmed.length >= 4 ? trimmed.slice(-4) : (trimmed || null);
+  const encrypted = trimmed ? encryptSecret(trimmed) : null;
+  await prisma.settings.upsert({
+    where: { shop },
+    create: {
+      shop,
+      shippyproApiKeyEncrypted: encrypted,
+      shippyproApiKeyHint: hint,
+      shippyproApiUrl: apiUrl || null,
+    },
+    update: {
+      shippyproApiKeyEncrypted: encrypted,
+      shippyproApiKeyHint: hint,
+      shippyproApiUrl: apiUrl === undefined ? undefined : (apiUrl || null),
+    },
+  });
+}
+
+export async function getShippyproConnection(shop: string): Promise<{ hasKey: boolean; hint: string | null; apiUrl: string | null }> {
+  const settings = await getOrCreateSettings(shop);
+  return {
+    hasKey: Boolean(settings.shippyproApiKeyEncrypted),
+    hint: settings.shippyproApiKeyHint ?? null,
+    apiUrl: settings.shippyproApiUrl ?? null,
+  };
 }
