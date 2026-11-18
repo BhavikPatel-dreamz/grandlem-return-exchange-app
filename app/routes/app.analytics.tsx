@@ -3,6 +3,7 @@ import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { Form, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { SettingsLayout } from "../components/admin/SettingsLayout";
 import {
   getKpis,
   getTopReturnedItems,
@@ -61,46 +62,52 @@ export default function AnalyticsPage() {
   const totalReturnsTrendGood = k.totalReturnsTrend <= 0;
 
   return (
-    <s-page heading="Analytics">
-      <Form method="get">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-        <s-stack direction="inline" gap="base">
-          <s-select name="range" label="Date range" value={data.range}>
-            <s-option value="7">Last 7 days</s-option>
-            <s-option value="30">Last 30 days</s-option>
-            <s-option value="90">Last 90 days</s-option>
-            <s-option value="custom">Custom</s-option>
-          </s-select>
-          <s-select name="market" label="Market" value={data.market}>
-            <s-option value="ALL">All</s-option>
-            <s-option value="SE">SE</s-option>
-            <s-option value="GB">GB</s-option>
-            <s-option value="US">US</s-option>
-            <s-option value="EU">EU</s-option>
-          </s-select>
-          <s-text-field name="from" label="From" value={data.from.slice(0, 10)} />
-          <s-text-field name="to" label="To" value={data.to.slice(0, 10)} />
-          <s-button type="submit">Apply</s-button>
-        </s-stack>
+    <SettingsLayout activeTab="analytics">
+      <div className="returbo-card">
+        <div className="returbo-card-header">
+          <h2 className="returbo-card-title">Analytics Filters</h2>
+          <p className="returbo-card-subtitle">Filter returns, exchanges, and revenue recovery metrics by timeframe and market.</p>
         </div>
-      </Form>
+        <Form method="get">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+            <s-select name="range" label="Date range" value={data.range}>
+              <s-option value="7">Last 7 days</s-option>
+              <s-option value="30">Last 30 days</s-option>
+              <s-option value="90">Last 90 days</s-option>
+              <s-option value="custom">Custom</s-option>
+            </s-select>
+            <s-select name="market" label="Market" value={data.market}>
+              <s-option value="ALL">All</s-option>
+              <s-option value="SE">SE</s-option>
+              <s-option value="GB">GB</s-option>
+              <s-option value="US">US</s-option>
+              <s-option value="EU">EU</s-option>
+            </s-select>
+            <s-text-field name="from" label="From" value={data.from.slice(0, 10)} />
+            <s-text-field name="to" label="To" value={data.to.slice(0, 10)} />
+            <div>
+              <s-button type="submit" variant="primary">Apply</s-button>
+            </div>
+          </div>
+        </Form>
+      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div className="returbo-kpi-grid">
         <KpiCard label="Return rate" value={`${k.returnRate}%`} trend={`${k.returnRateTrend > 0 ? "↑" : "↓"} ${k.returnRateTrend.toFixed(1)} pts vs prev`} good={returnRateTrendGood} />
         <KpiCard label="Exchange rate" value={`${k.exchangeRate}%`} trend={`${k.exchangeRateTrend > 0 ? "↑" : "↓"} ${k.exchangeRateTrend.toFixed(1)} pts vs prev`} good={exchangeRateTrendGood} highlight />
         <KpiCard label="Revenue recovered" value={`${compactMinor(k.revenueRecoveredMinor)} kr`} trend={`${k.revenueRecoveredTrendMinor >= 0 ? "+" : ""}${compactMinor(k.revenueRecoveredTrendMinor)} kr`} good={revenueTrendGood} />
         <KpiCard label="Total returns" value={`${k.totalReturns}`} trend={`${k.totalReturnsTrend >= 0 ? "+" : ""}${k.totalReturnsTrend}`} good={totalReturnsTrendGood} />
       </div>
 
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 20 }}>
         <TopReturnedItems items={data.topItems} periodLabel={data.periodLabel} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
         <ExchangeOutcomes items={data.outcomes} />
         <ReturnsByCountry items={data.byCountry} />
       </div>
-    </s-page>
+    </SettingsLayout>
   );
 }
 

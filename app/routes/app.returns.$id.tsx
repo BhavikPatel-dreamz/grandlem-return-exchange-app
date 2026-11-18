@@ -4,6 +4,7 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
+import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
 import { createReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
@@ -151,8 +152,11 @@ export default function ReturnDetailPage() {
   const actionData = useActionData<typeof action>();
 
   return (
-    <s-page heading={`Return ${rr.orderNumber || rr.id}`}>
-      {actionData?.message && <s-banner>{actionData.message}</s-banner>}
+    <div style={{ minHeight: "100vh", backgroundColor: "var(--returbo-bg, #f6f6f7)" }}>
+      <GrandLeMarHeader activeSection="returns" />
+      <div className="returbo-container" style={{ paddingBottom: 24 }}>
+        <s-page heading={`Return ${rr.orderNumber || rr.id}`}>
+          {actionData?.message && <s-banner>{actionData.message}</s-banner>}
 
       <s-section heading="Summary">
         <s-paragraph>Type: {rr.type}{rr.isWithdrawal ? " (Withdrawal)" : ""}</s-paragraph>
@@ -328,6 +332,8 @@ export default function ReturnDetailPage() {
 
       <s-link href="/app/returns">← Back to returns</s-link>
     </s-page>
+    </div>
+  </div>
   );
 }
 

@@ -6,6 +6,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { getOrCreateSettings, updateSettings } from "../services/settings.server";
+import { SettingsLayout } from "../components/admin/SettingsLayout";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -62,47 +63,55 @@ export default function ResolutionSettingsPage() {
   }, [actionData?.message, shopify]);
 
   return (
-    <s-page heading="Resolution & store credit settings">
-      {actionData?.message && <s-banner>{actionData.message}</s-banner>}
-      <Form method="post">
-        <input type="hidden" name="_action" value="save_settings" />
-        <s-stack direction="block" gap="base">
-          <s-checkbox name="deflectionEnabled" label="Enable refund deflection" defaultChecked={data.settings.deflectionEnabled} />
-          <s-checkbox name="storeCreditEnabled" label="Enable store credit" defaultChecked={data.settings.storeCreditEnabled} />
-          <s-select name="storeCreditMethod" label="Store credit method" value={data.settings.storeCreditMethod}>
-            <s-option value="gift_card">Gift card</s-option>
-            <s-option value="store_credit">Shopify store credit</s-option>
-          </s-select>
-          <s-number-field name="storeCreditBonusPercent" label="Store credit bonus %" value={String(data.settings.storeCreditBonusPercent)} />
-          <s-select name="storeCreditIssueTiming" label="Issue timing" value={data.settings.storeCreditIssueTiming}>
-            <s-option value="on_submit">On submit</s-option>
-            <s-option value="on_approval">On approval</s-option>
-            <s-option value="on_inspection">On inspection</s-option>
-          </s-select>
-          <s-section heading="Complaints">
-            <s-select name="complaintResolutionMode" label="Complaint resolution flow" value={data.settings.complaintResolutionMode}>
-              <s-option value="customer_chooses">Let customer choose replacement or refund</s-option>
-              <s-option value="always_replacement">Always replacement</s-option>
-              <s-option value="always_refund">Always refund</s-option>
+    <SettingsLayout activeTab="settings">
+      {actionData?.message && <div className="returbo-banner">{actionData.message}</div>}
+      <div className="returbo-card">
+        <div className="returbo-card-header">
+          <h2 className="returbo-card-title">Resolution & Store Credit Settings</h2>
+          <p className="returbo-card-subtitle">Configure refund deflection, store credit bonuses, advanced exchanges, and smart refunds.</p>
+        </div>
+        <Form method="post">
+          <input type="hidden" name="_action" value="save_settings" />
+          <s-stack direction="block" gap="base">
+            <s-checkbox name="deflectionEnabled" label="Enable refund deflection" defaultChecked={data.settings.deflectionEnabled} />
+            <s-checkbox name="storeCreditEnabled" label="Enable store credit" defaultChecked={data.settings.storeCreditEnabled} />
+            <s-select name="storeCreditMethod" label="Store credit method" value={data.settings.storeCreditMethod}>
+              <s-option value="gift_card">Gift card</s-option>
+              <s-option value="store_credit">Shopify store credit</s-option>
             </s-select>
-            <s-checkbox name="complaintRequireItemReturn" label="Require faulty item to be returned" defaultChecked={data.settings.complaintRequireItemReturn} />
-          </s-section>
-          <s-section heading="Advanced exchanges">
-            <s-select name="exchangeShipTiming" label="Ship timing" value={data.settings.exchangeShipTiming}>
-              <s-option value="SHIP_IMMEDIATELY">Ship immediately</s-option>
-              <s-option value="AFTER_IN_TRANSIT">After in transit</s-option>
-              <s-option value="AFTER_INSPECTED">After inspected</s-option>
+            <s-number-field name="storeCreditBonusPercent" label="Store credit bonus %" value={String(data.settings.storeCreditBonusPercent)} />
+            <s-select name="storeCreditIssueTiming" label="Issue timing" value={data.settings.storeCreditIssueTiming}>
+              <s-option value="on_submit">On submit</s-option>
+              <s-option value="on_approval">On approval</s-option>
+              <s-option value="on_inspection">On inspection</s-option>
             </s-select>
-            <s-number-field name="exchangeReserveDays" label="Reserve days" value={String(data.settings.exchangeReserveDays)} />
-            <s-checkbox name="offerCreditWhenUnavailable" label="Offer store credit when unavailable" defaultChecked={data.settings.offerCreditWhenUnavailable} />
-          </s-section>
-          <s-section heading="Smart refunds">
-            <s-checkbox name="clawBackFreeItems" label="Claw back free/discounted benefit" defaultChecked={data.settings.clawBackFreeItems} />
-          </s-section>
-          <s-button type="submit">Save</s-button>
-        </s-stack>
-      </Form>
-    </s-page>
+            <s-section heading="Complaints">
+              <s-select name="complaintResolutionMode" label="Complaint resolution flow" value={data.settings.complaintResolutionMode}>
+                <s-option value="customer_chooses">Let customer choose replacement or refund</s-option>
+                <s-option value="always_replacement">Always replacement</s-option>
+                <s-option value="always_refund">Always refund</s-option>
+              </s-select>
+              <s-checkbox name="complaintRequireItemReturn" label="Require faulty item to be returned" defaultChecked={data.settings.complaintRequireItemReturn} />
+            </s-section>
+            <s-section heading="Advanced exchanges">
+              <s-select name="exchangeShipTiming" label="Ship timing" value={data.settings.exchangeShipTiming}>
+                <s-option value="SHIP_IMMEDIATELY">Ship immediately</s-option>
+                <s-option value="AFTER_IN_TRANSIT">After in transit</s-option>
+                <s-option value="AFTER_INSPECTED">After inspected</s-option>
+              </s-select>
+              <s-number-field name="exchangeReserveDays" label="Reserve days" value={String(data.settings.exchangeReserveDays)} />
+              <s-checkbox name="offerCreditWhenUnavailable" label="Offer store credit when unavailable" defaultChecked={data.settings.offerCreditWhenUnavailable} />
+            </s-section>
+            <s-section heading="Smart refunds">
+              <s-checkbox name="clawBackFreeItems" label="Claw back free/discounted benefit" defaultChecked={data.settings.clawBackFreeItems} />
+            </s-section>
+            <div style={{ marginTop: 8 }}>
+              <s-button type="submit" variant="primary">Save</s-button>
+            </div>
+          </s-stack>
+        </Form>
+      </div>
+    </SettingsLayout>
   );
 }
 
