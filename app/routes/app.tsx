@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
+import "../styles/grandlemar.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -19,9 +20,6 @@ export default function App() {
     <AppProvider apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app/returns">Returns</s-link>
-        <s-link href="/app/inspection">Inspection</s-link>
-        <s-link href="/app/analytics">Analytics</s-link>
-        <s-link href="/app/email-templates">Emails</s-link>
         <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />

@@ -6,6 +6,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
 import { sendEmail } from "../services/email.server";
+import { SettingsLayout } from "../components/admin/SettingsLayout";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -102,40 +103,135 @@ export default function EmailTemplatesPage() {
   const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
 
   return (
-    <s-page heading="Email templates">
-      {actionData?.message && <s-banner>{actionData.message}</s-banner>}
+    <SettingsLayout activeTab="emails">
+      {actionData?.message && <div className="returbo-banner">{actionData.message}</div>}
 
       {mode === "list" && (
-        <>
-          <div style={{ marginBottom: 12 }}>
-            <s-button onClick={() => setMode("create")}>Add template</s-button>
-          </div>
-          <s-section heading={`Templates (${data.templates.length})`}>
-            {data.templates.length === 0 && <s-paragraph>No templates yet. Create one.</s-paragraph>}
-            <s-stack direction="block" gap="base">
-              {data.templates.map((t: any) => (
-                <s-box key={t.id} padding="base" borderWidth="base" borderRadius="base">
-                  <s-stack direction="block" gap="base">
-                    <s-paragraph><strong>{t.event}</strong> ({t.language})</s-paragraph>
-                    <s-paragraph>{t.subject}</s-paragraph>
-                    <s-stack direction="inline" gap="base">
-                      <s-button onClick={() => { setEditingId(t.id); setMode("edit"); }}>Edit</s-button>
-                      <Form method="post" style={{ display: "inline" }}>
-                        <input type="hidden" name="_action" value="delete_template" />
-                        <input type="hidden" name="id" value={t.id} />
-                        <s-button type="submit" variant="tertiary">Delete</s-button>
-                      </Form>
-                    </s-stack>
-                  </s-stack>
-                </s-box>
-              ))}
-            </s-stack>
-          </s-section>
-        </>
+        <div className="returbo-email-page">
+          <section className="returbo-card returbo-email-section">
+            <div className="returbo-card-header">
+              <h2 className="returbo-card-title">Customer return form customization</h2>
+              <p className="returbo-card-subtitle">Manage your return form, logo, and email notifications to create a custom return experience that suits your brand.</p>
+            </div>
+
+            <div className="returbo-logo-settings">
+              <h3>Your logo</h3>
+              <p>Recommended minimum resolution 512×512 px. The logo should be square shaped. Please check how the logo is displayed in your digital return form after uploading. Accepted file types: .jpg, .png.</p>
+              <div className="returbo-upload-preview"><span className="returbo-upload-file-icon" /> <span className="returbo-upload-button">Choose file</span><span>No file chosen</span></div>
+              <div className="returbo-static-check"><span />Show the logo in the digital return form.</div>
+              <div className="returbo-static-check"><span />Show the name of the store in the digital return form.</div>
+              <p className="returbo-static-check-help">You can choose to display the name of your company and your logo on the digital return form.</p>
+            </div>
+
+            <div className="returbo-return-form-preview">
+              <div className="returbo-preview-options">
+                <div className="returbo-palette-heading"><h3>Digital Return Form color palette</h3><span>Plus</span><span>Premium</span><span>Enterprise plan</span><p>Customize and adjust the colors to tailor the Digital Return Form to your brand.</p></div>
+                <div className="returbo-preview-option">
+                  <span className="returbo-preview-swatch returbo-preview-swatch-primary" />
+                  <div><strong>Main primary color</strong><span>Used for as background for primary buttons and as an action color for links, icons, etc.</span></div>
+                </div>
+                <div className="returbo-preview-option">
+                  <span className="returbo-preview-swatch returbo-preview-swatch-dark" />
+                  <div><strong>Primary text color</strong><span>Used for as the text color for headings and other primary elements.</span></div>
+                </div>
+                <div className="returbo-preview-option">
+                  <span className="returbo-preview-swatch" />
+                  <div><strong>Text color</strong><span>Used for the text for buttons and as a check icon color for when the item is selected.</span></div>
+                </div>
+                <div className="returbo-preview-option">
+                  <span className="returbo-preview-swatch returbo-preview-swatch-soft" />
+                  <div><strong>Secondary background color</strong><span>Used for as a background for secondary buttons and as a background color for badges.</span></div>
+                </div>
+                <div className="returbo-palette-actions"><button type="button">Back to default</button><button type="button" disabled>Save palette</button></div>
+              </div>
+
+              <div className="returbo-return-preview" aria-label="Customer return form preview">
+                <span className="returbo-preview-eyebrow">Preview</span>
+                <h3>Pick what you&apos;d like to return.</h3>
+                <p>Order <strong>#1234</strong> · Placed Mar 2, 2026 · Shipped Mar 4, 2026</p>
+                <div className="returbo-preview-deadline"><b>●</b> You have until <strong>Mar 14, 2026</strong> to return items from this order (12 days).</div>
+                <div className="returbo-preview-item"><span className="returbo-preview-product" /><span><strong>Organic Woollen Pullover</strong><small>L / Ivory<br />2 199.00 SEK</small></span><span className="returbo-preview-price">✓</span></div>
+                <div className="returbo-preview-links">⌕ &nbsp; Edit item &nbsp;&nbsp; ♜ &nbsp; Delete from request</div>
+                <button type="button" className="returbo-preview-submit">➤ &nbsp; Send in request</button>
+                <div className="returbo-preview-colors"><strong>Color *</strong><div><span>Ivory</span><span>White</span><span>Peach</span><span>Navy blue</span><span className="active">Calm pink ✓</span></div></div>
+                <button type="button" className="returbo-preview-confirm">⌄ &nbsp; Confirm</button>
+              </div>
+            </div>
+          </section>
+
+          <section className="returbo-card returbo-email-section">
+            <div className="returbo-card-header">
+              <h2 className="returbo-card-title">Return policy form</h2>
+              <p className="returbo-card-subtitle">The policy content customers see before they submit a return request.</p>
+            </div>
+            <div className="returbo-policy-note">Please ensure your return and exchange policy includes the information customers need before submitting a request.</div>
+            <article className="returbo-policy-preview">
+              <div className="returbo-policy-preview-header"><span className="returbo-badge returbo-badge-pink">English (US)</span><span>Policy preview</span></div>
+              <h3>Return policy</h3>
+              <p>Items can be returned within the return window configured in your settings. The item must be unused and returned in its original condition and packaging.</p>
+              <a href="#return-policy" onClick={(event) => event.preventDefault()}>Collapse text</a>
+            </article>
+          </section>
+
+          <section className="returbo-card returbo-email-section">
+            <div className="returbo-card-header returbo-email-section-header">
+              <div>
+                <h2 className="returbo-card-title">Customer notification emails</h2>
+                <p className="returbo-card-subtitle">Manage transactional emails sent to customers throughout the return journey.</p>
+              </div>
+              <button
+                type="button"
+                className="returbo-btn-primary"
+                onClick={() => setMode("create")}
+              >
+                Add template
+              </button>
+            </div>
+
+            {data.templates.length === 0 ? (
+              <p className="returbo-empty-state">No notification emails yet. Add a template to start communicating with customers.</p>
+            ) : (
+              <div className="returbo-email-template-list">
+                {data.templates.map((t: any) => (
+                  <article key={t.id} className="returbo-email-template-card">
+                    <div className="returbo-email-template-heading">
+                      <div>
+                        <div className="returbo-email-template-meta">
+                          <span className="returbo-badge returbo-badge-pink">{t.language.toUpperCase()}</span>
+                          <span>{t.event.replaceAll("_", " ")}</span>
+                        </div>
+                        <h3>{t.subject}</h3>
+                      </div>
+                      <div className="returbo-template-actions">
+                        <button
+                          type="button"
+                          className="returbo-btn-secondary"
+                          onClick={() => { setEditingId(t.id); setMode("edit"); }}
+                        >
+                          Edit
+                        </button>
+                        <Form method="post">
+                          <input type="hidden" name="_action" value="delete_template" />
+                          <input type="hidden" name="id" value={t.id} />
+                          <button type="submit" className="returbo-btn-danger">Delete</button>
+                        </Form>
+                      </div>
+                    </div>
+                    <p className="returbo-email-template-preview">{t.body.replace(/<[^>]*>/g, " ").trim() || "No email content added yet."}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {mode === "create" && (
-        <s-section heading="New template">
+        <div className="returbo-card">
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">New Email Template</h2>
+            <p className="returbo-card-subtitle">Create a localized email template for a return lifecycle event.</p>
+          </div>
           <Form method="post">
             <input type="hidden" name="_action" value="save_template" />
             <s-stack direction="block" gap="base">
@@ -148,17 +244,25 @@ export default function EmailTemplatesPage() {
               </s-select>
               <s-text-field name="subject" label="Subject" />
               <RichTextEditor name="body" />
-              <s-stack direction="inline" gap="base">
-                <s-button type="submit">Create</s-button>
-                <s-button variant="tertiary" onClick={() => setMode("list")}>Cancel</s-button>
-              </s-stack>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <div>
+                  <s-button type="submit" variant="primary">Create</s-button>
+                </div>
+                <div>
+                  <s-button variant="tertiary" onClick={() => setMode("list")}>Cancel</s-button>
+                </div>
+              </div>
             </s-stack>
           </Form>
-        </s-section>
+        </div>
       )}
 
       {mode === "edit" && editingTemplate && (
-        <s-section heading={`Edit template: ${editingTemplate.event} (${editingTemplate.language})`}>
+        <div className="returbo-card">
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">Edit Template: {editingTemplate.event} ({editingTemplate.language})</h2>
+            <p className="returbo-card-subtitle">Update email subject, content, and test email delivery.</p>
+          </div>
           <Form method="post">
             <input type="hidden" name="_action" value="save_template" />
             <input type="hidden" name="id" value={editingTemplate.id} />
@@ -172,27 +276,42 @@ export default function EmailTemplatesPage() {
               </s-select>
               <s-text-field name="subject" label="Subject" value={editingTemplate.subject} />
               <RichTextEditor name="body" initial={editingTemplate.body} />
-              <s-stack direction="inline" gap="base">
-                <s-button type="submit">Save</s-button>
-                <s-button variant="tertiary" onClick={() => { setMode("list"); setEditingId(null); }}>Back to list</s-button>
-              </s-stack>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <div>
+                  <s-button type="submit" variant="primary">Save</s-button>
+                </div>
+                <div>
+                  <s-button variant="tertiary" onClick={() => { setMode("list"); setEditingId(null); }}>Back to list</s-button>
+                </div>
+              </div>
             </s-stack>
           </Form>
-          <Form method="post" style={{ marginTop: 8 }}>
-            <input type="hidden" name="_action" value="test_send" />
-            <input type="hidden" name="subject" value={editingTemplate.subject} />
-            <input type="hidden" name="body" value={editingTemplate.body} />
-            <s-text-field name="testEmail" label="Test email address" />
-            <s-button type="submit" variant="tertiary">Test send</s-button>
-          </Form>
-          <Form method="post" style={{ marginTop: 8 }}>
-            <input type="hidden" name="_action" value="delete_template" />
-            <input type="hidden" name="id" value={editingTemplate.id} />
-            <s-button type="submit" variant="tertiary">Delete</s-button>
-          </Form>
-        </s-section>
+          <div style={{ borderTop: "1px solid var(--returbo-border)", marginTop: 20, paddingTop: 16 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 12px 0" }}>Test Email Delivery</h3>
+            <Form method="post">
+              <input type="hidden" name="_action" value="test_send" />
+              <input type="hidden" name="subject" value={editingTemplate.subject} />
+              <input type="hidden" name="body" value={editingTemplate.body} />
+              <s-stack direction="inline" gap="base">
+                <s-text-field name="testEmail" label="Test email address" />
+                <div>
+                  <s-button type="submit" variant="tertiary">Test send</s-button>
+                </div>
+              </s-stack>
+            </Form>
+          </div>
+          <div style={{ borderTop: "1px solid var(--returbo-border)", marginTop: 16, paddingTop: 16 }}>
+            <Form method="post">
+              <input type="hidden" name="_action" value="delete_template" />
+              <input type="hidden" name="id" value={editingTemplate.id} />
+              <div>
+                <s-button type="submit" variant="tertiary">Delete template</s-button>
+              </div>
+            </Form>
+          </div>
+        </div>
       )}
-    </s-page>
+    </SettingsLayout>
   );
 }
 
