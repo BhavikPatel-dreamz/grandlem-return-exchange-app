@@ -43,18 +43,20 @@ In `shopify.app.toml` add:
 
 ```toml
 [app_proxy]
-url = "/proxy/returns"
+url = "/proxy"
 prefix = "apps"
 subpath = "returns"
 ```
 
 Run `shopify app deploy` (or dev) so the shop serves `/apps/returns`.
 
+An app has only one app proxy, so it points at `/proxy`, not `/proxy/returns`. `/apps/returns` maps to `/proxy` (returns page) and `/apps/returns/withdraw` maps to `/proxy/withdraw` (existing withdrawal routes).
+
 Confirm on a dev store: opening `/apps/returns` hits this app and the query string includes `shop`, `signature`, `timestamp`, and `logged_in_customer_id` when a customer is logged in.
 
 ## Step 2 — Proxy route that renders in the theme
 
-Add `app/routes/proxy.returns.tsx`.
+Add `app/routes/proxy._index.tsx` (serves `/proxy`).
 
 - Authenticate with `authenticate.public.appProxy(request)`.
 - Return HTML with `Content-Type: application/liquid` so Shopify wraps it in the theme.

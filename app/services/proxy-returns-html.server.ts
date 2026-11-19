@@ -124,6 +124,11 @@ const STYLES = `<style>
 .glr-meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0 0 1rem; }
 .glr-meta dt { opacity: .7; }
 .glr-meta dd { margin: 0; }
+.glr-order { width: 100%; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .25rem 1rem; text-align: left; }
+.glr-order__name { font-weight: 600; }
+details.glr-card > summary { cursor: pointer; font-weight: 600; }
+details.glr-card[open] > summary { margin-bottom: 1rem; }
+details.glr-card > .glr-card { border: 0; padding: 0; }
 </style>`;
 
 /** Wraps a screen in the page container. Shopify adds the theme header/footer. */

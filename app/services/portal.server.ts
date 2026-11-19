@@ -131,6 +131,20 @@ export async function lookupAndValidateOrder(
     return { ok: false, code: "EMAIL_MISMATCH", message: "Email does not match the order." };
   }
 
+  return validateOrderNode(shop, node, requestType);
+}
+
+/**
+ * Shared checks after an order has been fetched and its owner confirmed:
+ * fulfillment, exclusions / already returned, and the deadline for `requestType`.
+ * Used by the guest lookup and the logged-in storefront path.
+ */
+async function validateOrderNode(
+  shop: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  node: any,
+  requestType: "return" | "exchange" | "complaint",
+): Promise<PortalOrderResult | PortalError> {
   const fulfillmentStatus = node.displayFulfillmentStatus || node.fulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
@@ -211,6 +225,122 @@ export async function lookupAndValidateOrder(
     requestType,
     reasons,
   };
+}
+
+const CUSTOMER_ORDERS_QUERY = `#graphql
+  query proxyCustomerOrders($customerId: ID!) {
+    customer(id: $customerId) {
+      id
+      orders(first: 20, sortKey: CREATED_AT, reverse: true) {
+        nodes {
+          id
+          name
+          createdAt
+          displayFulfillmentStatus
+          cancelledAt
+        }
+      }
+    }
+  }
+`;
+
+const ORDER_BY_ID_QUERY = `#graphql
+  query proxyOrderById($id: ID!) {
+    order(id: $id) {
+      id
+      name
+      email
+      createdAt
+      displayFulfillmentStatus
+      customer { id }
+      lineItems(first: 50) {
+        edges {
+          node {
+            id
+            title
+            quantity
+            variant {
+              id
+              product {
+                id
+                collections(first: 20) { edges { node { id } } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export type CustomerOrderSummary = {
+  id: string;
+  name: string;
+  createdAt: string;
+  fulfillmentStatus: string | null;
+};
+
+const ORDER_GID = /^gid:\/\/shopify\/Order\/\d+$/;
+const NUMERIC_ID = /^\d+$/;
+
+function customerGid(customerId: string): string | null {
+  return NUMERIC_ID.test(customerId) ? `gid://shopify/Customer/${customerId}` : null;
+}
+
+/**
+ * Recent, non-cancelled orders for a logged-in storefront customer.
+ * `customerId` must come from the signed app-proxy `logged_in_customer_id`.
+ */
+export async function listCustomerOrders(shop: string, customerId: string): Promise<CustomerOrderSummary[]> {
+  const gid = customerGid(customerId);
+  if (!shop || !gid) return [];
+  const { admin } = await unauthenticated.admin(shop);
+  const response = await admin.graphql(CUSTOMER_ORDERS_QUERY, { variables: { customerId: gid } });
+  const json = await response.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodes: any[] = json?.data?.customer?.orders?.nodes ?? [];
+  return nodes
+    .filter((n) => !n.cancelledAt)
+    .map((n) => ({
+      id: n.id,
+      name: n.name,
+      createdAt: n.createdAt,
+      fulfillmentStatus: n.displayFulfillmentStatus ?? null,
+    }));
+}
+
+/**
+ * Logged-in equivalent of `lookupAndValidateOrder`: loads the order by id,
+ * requires `order.customer.id` to match the signed `logged_in_customer_id`,
+ * then runs the same fulfillment / exclusion / deadline checks.
+ * A missing order and someone else's order both return ORDER_NOT_FOUND.
+ */
+export async function lookupOrderForCustomer(
+  shop: string,
+  orderId: string,
+  customerId: string,
+  requestType: "return" | "exchange" | "complaint",
+): Promise<PortalOrderResult | PortalError> {
+  const gid = customerGid(customerId);
+  if (!shop || !gid || !ORDER_GID.test(orderId)) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  let admin;
+  try {
+    ({ admin } = await unauthenticated.admin(shop));
+  } catch {
+    return { ok: false, code: "SHOP_REQUIRED", message: "This shop is not available." };
+  }
+
+  const response = await admin.graphql(ORDER_BY_ID_QUERY, { variables: { id: orderId } });
+  const json = await response.json();
+  const node = json?.data?.order;
+  if (!node || node.customer?.id !== gid) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  return validateOrderNode(shop, node, requestType);
 }
 
 export function portalErrorCodeToMessage(code: PortalErrorCode, lang: "en" | "sv" = "en"): string {
