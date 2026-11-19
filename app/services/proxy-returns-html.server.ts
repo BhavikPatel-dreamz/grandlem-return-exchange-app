@@ -77,6 +77,23 @@ export function field(opts: {
 </div>`;
 }
 
+export function radioGroup(opts: {
+  name: string;
+  legend: string;
+  options: { value: string; label: string }[];
+  selected?: string;
+}): string {
+  const items = opts.options
+    .map((o, i) => {
+      const checked = opts.selected ? o.value === opts.selected : i === 0;
+      return `<label class="glr-choice"><input type="radio" name="${esc(opts.name)}" value="${esc(o.value)}"${
+        checked ? " checked" : ""
+      } required> <span>${esc(o.label)}</span></label>`;
+    })
+    .join("");
+  return `<fieldset class="glr-choices"><legend>${esc(opts.legend)}</legend>${items}</fieldset>`;
+}
+
 export function errorBox(message: string | null | undefined): string {
   if (!message) return "";
   return `<div class="glr-error" role="alert">${esc(message)}</div>`;
@@ -100,6 +117,13 @@ const STYLES = `<style>
 .glr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; }
 .glr-muted { opacity: .7; font-size: .9em; }
 .glr button[disabled] { opacity: .5; cursor: not-allowed; }
+.glr-choices { border: 0; padding: 0; margin: 0 0 1.25rem; }
+.glr-choices legend { padding: 0; margin-bottom: .5rem; font-weight: 600; }
+.glr-choice { display: flex; align-items: center; gap: .5rem; padding: .35rem 0; cursor: pointer; }
+.glr-choice input { margin: 0; width: 1.1rem; height: 1.1rem; }
+.glr-meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0 0 1rem; }
+.glr-meta dt { opacity: .7; }
+.glr-meta dd { margin: 0; }
 </style>`;
 
 /** Wraps a screen in the page container. Shopify adds the theme header/footer. */
