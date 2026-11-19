@@ -15,7 +15,18 @@ Two ways in, one flow after the order is known:
 1. **Logged-in customer.** Shopify customer session is present. Show that customer’s recent orders. They pick one. Do not ask for email.
 2. **Guest.** No session. Ask for order number and the email on the order. Both must match the same order.
 
-Then both paths use the same steps: choose request type, choose items, give a reason, submit, see confirmation.
+Then both paths use the same steps as today’s portal: request type, items, reason, submit, confirmation. The new page also asks how to settle the request, which the current portal does not. The merchant sets that later on the return in admin (`requestedResolution` on `app/routes/app.returns.$id.tsx`).
+
+## What the app does today
+
+`app/routes/portal.tsx` and `lookupAndValidateOrder` in `app/services/portal.server.ts`:
+
+- Customer picks **Return**, **Exchange**, or **Complaint** before “Find order”. That value is sent into lookup. Deadline, item exclusion, and the deadline date all depend on it. Changing the type means running lookup again. The three types are always shown. Deadline settings do not hide a type up front. An expired type fails lookup with `DEADLINE_EXPIRED`.
+- Lookup also requires a fulfilled order and a matching email. Errors today are specific (`ORDER_NOT_FOUND`, `EMAIL_MISMATCH`, `NOT_FULFILLED`). The proxy page keeps one public message for a wrong order or email. Other codes (`NOT_FULFILLED`, `DEADLINE_EXPIRED`, `ALL_ITEMS_EXCLUDED_OR_RETURNED`) stay specific, using `portalErrorCodeToMessage`.
+- After a match, the customer selects items, quantity, reason, comment, and photos. Complaint photo count and comment length already follow `claimRequiresPhoto`, `claimMinPhotos`, and `claimMinCommentLength`.
+- `createReturnRequest` saves `type` only. It does not accept `requestedResolution`. Withdrawal sets that field in a second update (`app/services/withdrawal.server.ts`).
+- Active reasons are loaded with `listReturnReasons(shop, true)`. The current portal does not filter `appliesTo`. The proxy page will.
+- These admin settings are saved and not used by the customer portal: `deflectionEnabled`, `storeCreditEnabled`, `storeCreditBonusPercent`, `complaintResolutionMode`, `complaintRequireItemReturn`, `offerCreditWhenUnavailable`. Ship timing and reserve days are merchant-only. The proxy page must start enforcing the ones that change what the customer can pick. `offerCreditWhenUnavailable` stays unused until the app can tell that a replacement variant is out of stock. Nothing does that check today.
 
 ## Security rules
 
@@ -60,9 +71,16 @@ First screen when `logged_in_customer_id` is empty:
 - Email
 - Submit “Find order”
 
-Server calls the existing `lookupAndValidateOrder(shop, orderNumber, email, requestType)` in `app/services/portal.server.ts`. Request type can default to `return` on this screen and be changed on the next screen.
+Same fields as the current portal, in this order:
 
-On success, issue a signed order token (order id, shop, expiry around 30 minutes) and render step 4. On failure, show the single generic error.
+- Request type: Return, Exchange, Complaint
+- Order number
+- Email
+- Submit “Find order”
+
+Server calls `lookupAndValidateOrder(shop, orderNumber, email, requestType)`. If they change request type, submit lookup again. Do not reuse a result from another type.
+
+On success, issue a signed order token (order id, shop, request type, expiry around 30 minutes) and render step 5. On `ORDER_NOT_FOUND` or `EMAIL_MISMATCH`, show “We couldn’t find that order.” Show the existing message for the other error codes.
 
 ## Step 4 — Logged-in order list
 
@@ -70,7 +88,7 @@ When `logged_in_customer_id` is set:
 
 - Load that customer’s recent orders with the shop’s Admin API session (offline session already stored for the shop).
 - Render a list: order name, date, fulfillment status. Each row is a submit button.
-- Choosing an order verifies the order’s `customer.id` matches `logged_in_customer_id`, then issues the same signed order token as the guest path.
+- Choosing an order still needs a request type, then verifies the order’s `customer.id` matches `logged_in_customer_id`, then runs the same deadline and exclusion checks as `lookupAndValidateOrder` for that type. Issue the same signed order token as the guest path. There is no logged-in lookup helper today, so this check is new and must not skip fulfillment, deadline, or exclusion.
 - If the customer has no orders, show an empty state and the guest form as a fallback.
 
 ## Step 5 — Request type, resolution, items, and submit
@@ -81,15 +99,15 @@ Load `getOrCreateSettings(shop)` and build the choices on the server. The form o
 
 ### Request type
 
-Show only types that are still inside the deadline from settings (`returnDeadlineDays`, `exchangeDeadlineDays`, `complaintDeadlineDays`, plus any deadline extension):
+Keep the current three options. Do not hide one before lookup.
 
-| Customer option | Stored `requestType` | Show when |
+| Customer option | Stored `type` | Deadline setting used at lookup |
 | --- | --- | --- |
-| Return | `return` | Return deadline is still open |
-| Exchange | `exchange` | Exchange deadline is still open |
-| Complaint | `complaint` | Complaint deadline is still open |
+| Return | `return` | `returnDeadlineDays` |
+| Exchange | `exchange` | `exchangeDeadlineDays` |
+| Complaint | `complaint` | `complaintDeadlineDays` |
 
-If none are open, stop with the existing deadline error. Do not show a refund button here. Refund is a resolution on a return or complaint, not a third request type.
+Deadline extensions still apply inside `getEffectiveDeadline`. If that type is expired, lookup returns `DEADLINE_EXPIRED`. Refund is not a request type. It is `requestedResolution` on a return or complaint.
 
 ### Resolution (how they want it settled)
 
@@ -103,8 +121,8 @@ After they pick a request type, show the resolution choices that match **Resolut
 
 **Exchange**
 
-- Resolution is exchange. No refund or store credit on this path.
-- If the replacement variant is unavailable and `offerCreditWhenUnavailable` is on and store credit is on, offer store credit as the fallback. If that flag is off, block the item with “Not available for exchange.”
+- Resolution is `exchange`. No refund or store credit picker on this path.
+- Leave `offerCreditWhenUnavailable` unused in this pass. The app does not check replacement stock yet. Do not add a store-credit fallback until that check exists.
 
 **Complaint** (`complaintResolutionMode`)
 
@@ -117,10 +135,10 @@ Save the chosen value on the return as `requestedResolution`: `refund`, `store_c
 
 ### Items and submit
 
-1. Line items from the validated order. Skip items already marked excluded for that request type (`appliesToReturns` / `appliesToExchanges`).
-2. Reason per selected item. Only reasons whose `appliesTo` includes the selected request type.
-3. Photos and comment length follow `claimRequiresPhoto`, `claimMinPhotos`, and `claimMinCommentLength` when the request is a complaint. Other types keep the existing `MAX_PHOTO_SIZE` cap.
-4. Submit calls `createReturnRequest` and `sendEventEmail`, same as `portal.tsx`, and stores `requestedResolution`.
+1. Line items from the validated order. `isItemExcluded` already applies `appliesToReturns`, `appliesToExchanges`, and complaints for the request type passed into lookup. Skip `excluded` items the same way `portal.tsx` does.
+2. Reason per selected item. Filter to active reasons whose `appliesTo` contains the request type (or `any`). The current portal lists every active reason; the proxy page filters.
+3. Photos and comment length: copy the complaint checks in `portal.tsx` (`claimRequiresPhoto`, `claimMinPhotos`, `claimMinCommentLength`, images only, 5MB).
+4. Submit calls `createReturnRequest` and `sendEventEmail` the same way as `portal.tsx`. Then set `requestedResolution` with `prisma.returnRequest.update`, the same pattern as `createWithdrawal`. Do not pass resolution into `createReturnRequest` until that function grows a field for it. Reject a posted resolution that the settings do not allow.
 
 Confirmation screen: request number and short next-step text. No order details beyond what they already submitted.
 
