@@ -1,15 +1,17 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Link } from "react-router";
+import { Link, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
+import { storefrontReturnsUrl } from "../services/storefront-links.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-  return null;
+  const { session } = await authenticate.admin(request);
+  return { returnsUrl: storefrontReturnsUrl(session.shop) };
 };
 
 export default function DashboardPage() {
+  const { returnsUrl } = useLoaderData<typeof loader>();
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--returbo-bg, #f6f6f7)" }}>
       <GrandLeMarHeader activeSection="dashboard" />
@@ -56,6 +58,24 @@ export default function DashboardPage() {
               </p>
             </Link>
           </div>
+        </div>
+
+        <div className="returbo-card">
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">Customer returns page</h2>
+            <p className="returbo-card-subtitle">
+              Customers start returns on your store, inside your theme. Link to this address from your store.
+            </p>
+          </div>
+          <p style={{ margin: "0 0 12px 0", wordBreak: "break-all" }}>
+            <a href={returnsUrl} target="_blank" rel="noreferrer"><code>{returnsUrl}</code></a>
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--returbo-text-muted)", lineHeight: 1.6 }}>
+            <li>Online Store › Navigation: add a “Returns” link to <code>/apps/returns</code> in the footer menu.</li>
+            <li>Settings › Notifications: add the link to the shipping confirmation and order status emails.</li>
+            <li>App emails: use <code>{"{{returnsUrl}}"}</code> in templates under Settings › Email templates.</li>
+            <li>Swedish page: add <code>?lang=sv</code> to the address.</li>
+          </ul>
         </div>
       </main>
     </div>
