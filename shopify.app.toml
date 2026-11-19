@@ -71,7 +71,7 @@ api_version = "2026-10"
   query_filter = "product.status:'ACTIVE'"
 
 [app_proxy]
-url = "/proxy/returns"
+url = "/proxy"
 prefix = "apps"
 subpath = "returns"
 
