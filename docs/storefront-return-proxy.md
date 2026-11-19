@@ -165,3 +165,20 @@ Automated: `npm test` runs these checks (and the security rules above) against t
 - Customer Account UI extension (new customer accounts).
 - Withdrawal flow (`/proxy/withdraw`) restyle. Same proxy pattern can be copied after returns work.
 - Replacing the admin `portal.tsx` page.
+
+## Status — 2026-11-19
+
+Steps 1–7 are coded and committed on `main`. `npm test` passes (21 checks). Nothing is pushed or deployed yet.
+
+Next session, in order:
+
+1. Deploy: `npm run deploy` (sends `[app_proxy]` to Shopify) and push so Vercel builds the app.
+2. Dev-store pass on `bhavik-app-test-5couj1fn.myshopify.com/apps/returns` (Step 7 list):
+   - Page renders inside the theme header and footer.
+   - One guest return and one logged-in return, end to end; both show in the admin returns list.
+   - Complaint with 2–3 photos of 3–5 MB each. Not yet confirmed that Shopify forwards uploads that size through the proxy.
+   - Second shop install uses its own theme and orders.
+3. Open items after the dev-store pass:
+   - Orders older than 60 days need the `read_all_orders` scope (affects the order list and guest lookup).
+   - "Start a return" theme app block linking to `/apps/returns`.
+   - Move the withdrawal flow (`proxy.withdraw.*`) to this proxy pattern. Its confirm step redirects to `/proxy/withdraw`, which 404s through the store, and it trusts a posted `shop`.
