@@ -152,6 +152,8 @@ Confirmation screen: request number and short next-step text. No order details b
 
 ## Step 7 — Check on a dev store
 
+Automated: `npm test` runs these checks (and the security rules above) against the real proxy route with Shopify and the database faked (`tests/proxy-returns.test.ts`). It does not replace the dev-store pass below: theme rendering, the real proxy signature, and photo uploads through the proxy only show up on a store.
+
 - Guest, correct order number and email: items appear inside the theme header and footer.
 - Guest, wrong email: generic error, no items.
 - Logged-in customer: their orders only. Opening another customer’s order id in the form is rejected.
