@@ -168,9 +168,10 @@ async function validateOrderNode(
 
   const shopifyOrderId = String(node.id).split("/").pop() || node.id;
 
-  // Fetch already-returned line items for this order.
+  // Fetch already-returned line items for this order. Requests store the order
+  // GID (createReturnRequest gets `order.id`); match the numeric id too for older rows.
   const existingRequests = await prisma.returnRequest.findMany({
-    where: { shop, shopifyOrderId },
+    where: { shop, shopifyOrderId: { in: [shopifyOrderId, String(node.id)] } },
     include: { items: true },
   });
   const returnedLineItemIds = new Set<string>();
@@ -322,24 +323,49 @@ export async function lookupOrderForCustomer(
   requestType: "return" | "exchange" | "complaint",
 ): Promise<PortalOrderResult | PortalError> {
   const gid = customerGid(customerId);
-  if (!shop || !gid || !ORDER_GID.test(orderId)) {
+  if (!gid) {
     return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
   }
 
+  const node = await fetchOrderNodeById(shop, orderId);
+  if ("ok" in node) return node;
+  if (node.customer?.id !== gid) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  return validateOrderNode(shop, node, requestType);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchOrderNodeById(shop: string, orderId: string): Promise<any | PortalError> {
+  if (!shop || !ORDER_GID.test(orderId)) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
   let admin;
   try {
     ({ admin } = await unauthenticated.admin(shop));
   } catch {
     return { ok: false, code: "SHOP_REQUIRED", message: "This shop is not available." };
   }
-
   const response = await admin.graphql(ORDER_BY_ID_QUERY, { variables: { id: orderId } });
   const json = await response.json();
   const node = json?.data?.order;
-  if (!node || node.customer?.id !== gid) {
-    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
-  }
+  if (!node) return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  return node;
+}
 
+/**
+ * Re-runs the fulfillment / exclusion / deadline checks for an order whose
+ * ownership was already proven (the caller holds a verified signed order token).
+ * Used again at submit time so a stale page can't bypass the rules.
+ */
+export async function revalidateOrderById(
+  shop: string,
+  orderId: string,
+  requestType: "return" | "exchange" | "complaint",
+): Promise<PortalOrderResult | PortalError> {
+  const node = await fetchOrderNodeById(shop, orderId);
+  if ("ok" in node) return node;
   return validateOrderNode(shop, node, requestType);
 }
 
