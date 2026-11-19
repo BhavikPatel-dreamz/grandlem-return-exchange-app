@@ -70,6 +70,11 @@ api_version = "2026-10"
   """
   query_filter = "product.status:'ACTIVE'"
 
+[app_proxy]
+url = "/proxy/returns"
+prefix = "apps"
+subpath = "returns"
+
 [auth]
 redirect_urls = [ "https://grandlem-return-exchange-app.vercel.app/api/auth" ]
 
