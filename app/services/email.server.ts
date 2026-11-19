@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { listEmailTemplates } from "./email-templates.server";
+import { storefrontReturnsUrl } from "./storefront-links.server";
 
 export type EmailVars = Record<string, string | number | null | undefined>;
 
@@ -39,8 +40,10 @@ export async function sendEventEmail(
     || templates.find((t: any) => t.event === event)
     || null;
   if (!tpl) return { ok: false };
-  const subject = renderTemplate(tpl.subject, vars);
-  const body = renderTemplate(tpl.body, vars);
+  // Every template can use {{returnsUrl}}: the storefront return page (app proxy).
+  const allVars: EmailVars = { returnsUrl: storefrontReturnsUrl(shop, tpl.language), ...vars };
+  const subject = renderTemplate(tpl.subject, allVars);
+  const body = renderTemplate(tpl.body, allVars);
   const result = await sendEmail(to, subject, body);
   return { ok: result.ok };
 }

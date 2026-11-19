@@ -4,6 +4,7 @@ import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "re
 import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { storefrontReturnsUrl } from "../services/storefront-links.server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
 import { sendEmail } from "../services/email.server";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
@@ -11,7 +12,7 @@ import { SettingsLayout } from "../components/admin/SettingsLayout";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const templates = await listEmailTemplates(session.shop);
-  return { shop: session.shop, templates };
+  return { shop: session.shop, templates, returnsUrl: storefrontReturnsUrl(session.shop) };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -178,6 +179,9 @@ export default function EmailTemplatesPage() {
               <div>
                 <h2 className="returbo-card-title">Customer notification emails</h2>
                 <p className="returbo-card-subtitle">Manage transactional emails sent to customers throughout the return journey.</p>
+                <p className="returbo-card-subtitle">
+                  Use <code>{"{{returnsUrl}}"}</code> to link to your storefront returns page (<code>{data.returnsUrl}</code>).
+                </p>
               </div>
               <button
                 type="button"
