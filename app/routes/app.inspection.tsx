@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import { Form, Link, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { saveInspection } from "../services/inspection.server";
+import { SettingsLayout } from "../components/admin/SettingsLayout";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -85,30 +86,52 @@ export default function InspectionPage() {
   const actionData = useActionData<typeof action>();
 
   return (
-    <s-page heading="Warehouse inspection">
-      {actionData?.message && <s-banner>{actionData.message}</s-banner>}
+    <SettingsLayout activeTab="inspection">
+      {actionData?.message && <div className="returbo-banner">{actionData.message}</div>}
 
-      <s-section heading="Search (order / tracking / SKU)">
+      <div className="returbo-card">
+        <div className="returbo-card-header">
+          <h2 className="returbo-card-title">Warehouse Inspection</h2>
+          <p className="returbo-card-subtitle">Search by order number, tracking number, or item SKU to inspect returned merchandise.</p>
+        </div>
         <Form method="get">
           <s-stack direction="inline" gap="base">
             <s-text-field name="q" label="Scan or type" value={data.q} />
-            <s-button type="submit">Search</s-button>
+            <div>
+              <s-button type="submit" variant="primary">Search</s-button>
+            </div>
           </s-stack>
         </Form>
-      </s-section>
+      </div>
 
-      {data.requests.length === 0 && <s-paragraph>No requests awaiting inspection.</s-paragraph>}
+      {data.requests.length === 0 && (
+        <div className="returbo-card" style={{ textAlign: "center", padding: "40px 24px" }}>
+          <p style={{ margin: 0, color: "var(--returbo-text-muted)", fontSize: 14 }}>
+            No requests awaiting inspection.
+          </p>
+        </div>
+      )}
 
       {data.requests.map((rr: any) => (
-        <s-section key={rr.id} heading={`Order ${rr.orderNumber || rr.id} – ${rr.status}`}>
-          <s-paragraph>Customer: {rr.customerEmail}</s-paragraph>
-          <s-paragraph>Tracking: {rr.label?.trackingNumber || "n/a"}</s-paragraph>
-
-          <Form method="post" style={{ marginBottom: 8 }}>
-            <input type="hidden" name="_action" value="mark_received" />
-            <input type="hidden" name="requestId" value={rr.id} />
-            <s-button type="submit" variant="tertiary">Mark received</s-button>
-          </Form>
+        <div key={rr.id} className="returbo-card">
+          <div className="returbo-card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <h2 className="returbo-card-title">Order {rr.orderNumber || rr.id}</h2>
+              <p className="returbo-card-subtitle">
+                Customer: {rr.customerEmail || "N/A"} &bull; Tracking: {rr.label?.trackingNumber || "N/A"}
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className={`returbo-badge ${rr.status === "Received" ? "returbo-badge-green" : "returbo-badge-yellow"}`}>
+                {rr.status}
+              </span>
+              <Form method="post" style={{ display: "inline" }}>
+                <input type="hidden" name="_action" value="mark_received" />
+                <input type="hidden" name="requestId" value={rr.id} />
+                <s-button type="submit" variant="tertiary">Mark received</s-button>
+              </Form>
+            </div>
+          </div>
 
           <Form method="post">
             <input type="hidden" name="_action" value="save_inspection" />
@@ -117,8 +140,10 @@ export default function InspectionPage() {
               {rr.items.map((it: any) => {
                 const insp = it.inspection;
                 return (
-                  <s-box key={it.id} padding="base" borderWidth="base" borderRadius="base">
-                    <s-paragraph>{it.title} x{it.returnedQuantity || it.quantity}</s-paragraph>
+                  <div key={it.id} style={{ border: "1px solid var(--returbo-border)", borderRadius: "var(--returbo-radius-md)", padding: 16, backgroundColor: "#fafafa" }}>
+                    <p style={{ margin: "0 0 10px 0", fontWeight: 600 }}>
+                      {it.title} <span className="returbo-badge returbo-badge-gray">x{it.returnedQuantity || it.quantity}</span>
+                    </p>
                     <s-stack direction="block" gap="base">
                       <s-select name={`condition_${it.id}`} label="Condition" value={insp?.condition || "OK"}>
                         <s-option value="OK">OK</s-option>
@@ -133,17 +158,23 @@ export default function InspectionPage() {
                       />
                       <s-text-field name={`note_${it.id}`} label="Note" value={insp?.note || ""} />
                     </s-stack>
-                  </s-box>
+                  </div>
                 );
               })}
-              <s-button type="submit">Save inspection</s-button>
+              <div style={{ marginTop: 8 }}>
+                <s-button type="submit" variant="primary">Save inspection</s-button>
+              </div>
             </s-stack>
           </Form>
-        </s-section>
+        </div>
       ))}
 
-      <s-link href="/app/returns">← Back to returns</s-link>
-    </s-page>
+      <div style={{ marginTop: 16 }}>
+        <Link to="/app/returns" style={{ color: "var(--returbo-pink)", textDecoration: "none", fontSize: 14, fontWeight: 500 }}>
+          &larr; Back to returns
+        </Link>
+      </div>
+    </SettingsLayout>
   );
 }
 
