@@ -73,15 +73,54 @@ When `logged_in_customer_id` is set:
 - Choosing an order verifies the order’s `customer.id` matches `logged_in_customer_id`, then issues the same signed order token as the guest path.
 - If the customer has no orders, show an empty state and the guest form as a fallback.
 
-## Step 5 — Request type, items, and submit
+## Step 5 — Request type, resolution, items, and submit
 
 Same screen for guest and logged-in customers, only if the order token is valid.
 
-1. Request type: Return, Exchange, Complaint (same values as today’s portal: `return`, `exchange`, `complaint`). There is no separate refund choice. Refund is a merchant setting.
-2. Line items from the validated order. Skip items already marked excluded.
-3. Reason per selected item, using the shop’s return reasons from settings.
-4. Optional note and photos, reusing the limits already in `portal.tsx` (`MAX_PHOTO_SIZE`).
-5. Submit calls `createReturnRequest` and `sendEventEmail`, same as `portal.tsx`.
+Load `getOrCreateSettings(shop)` and build the choices on the server. The form only lists what that shop turned on. On submit, ignore any posted value that is not in that list and return an error. Do not trust the browser.
+
+### Request type
+
+Show only types that are still inside the deadline from settings (`returnDeadlineDays`, `exchangeDeadlineDays`, `complaintDeadlineDays`, plus any deadline extension):
+
+| Customer option | Stored `requestType` | Show when |
+| --- | --- | --- |
+| Return | `return` | Return deadline is still open |
+| Exchange | `exchange` | Exchange deadline is still open |
+| Complaint | `complaint` | Complaint deadline is still open |
+
+If none are open, stop with the existing deadline error. Do not show a refund button here. Refund is a resolution on a return or complaint, not a third request type.
+
+### Resolution (how they want it settled)
+
+After they pick a request type, show the resolution choices that match **Resolution & store credit** (`app/routes/app.settings.resolutions.tsx`):
+
+**Return**
+
+- **Refund** is available unless refund deflection is on (`deflectionEnabled`). When deflection is on, hide refund and explain that the refund is offered as store credit.
+- **Store credit** only if `storeCreditEnabled` is on. Show the bonus percent from `storeCreditBonusPercent` when it is greater than 0. Do not mention gift card vs Shopify store credit; `storeCreditMethod` is applied later by the app.
+- **Exchange** only if the exchange deadline is still open. Ship timing (`exchangeShipTiming`) and reserve days are merchant rules. Do not ask the customer to pick them.
+
+**Exchange**
+
+- Resolution is exchange. No refund or store credit on this path.
+- If the replacement variant is unavailable and `offerCreditWhenUnavailable` is on and store credit is on, offer store credit as the fallback. If that flag is off, block the item with “Not available for exchange.”
+
+**Complaint** (`complaintResolutionMode`)
+
+- `customer_chooses`: customer picks replacement or refund. Refund still hides when `deflectionEnabled` is on; store credit shows only when `storeCreditEnabled` is on.
+- `always_replacement`: no choice. Save resolution as replacement.
+- `always_refund`: no choice. Save resolution as refund, or store credit when deflection is on and store credit is enabled.
+- `complaintRequireItemReturn` only changes the confirmation copy (item must be sent back, or not). It does not add a new option.
+
+Save the chosen value on the return as `requestedResolution`: `refund`, `store_credit`, `exchange`, or `replacement`.
+
+### Items and submit
+
+1. Line items from the validated order. Skip items already marked excluded for that request type (`appliesToReturns` / `appliesToExchanges`).
+2. Reason per selected item. Only reasons whose `appliesTo` includes the selected request type.
+3. Photos and comment length follow `claimRequiresPhoto`, `claimMinPhotos`, and `claimMinCommentLength` when the request is a complaint. Other types keep the existing `MAX_PHOTO_SIZE` cap.
+4. Submit calls `createReturnRequest` and `sendEventEmail`, same as `portal.tsx`, and stores `requestedResolution`.
 
 Confirmation screen: request number and short next-step text. No order details beyond what they already submitted.
 
