@@ -262,6 +262,7 @@ export default function ReturnDetailPage() {
               <s-option value="refund">Refund</s-option>
               <s-option value="store_credit">Store credit</s-option>
               <s-option value="exchange">Exchange</s-option>
+              <s-option value="replacement">Replacement</s-option>
             </s-select>
             <s-button type="submit">Save resolution</s-button>
           </s-stack>

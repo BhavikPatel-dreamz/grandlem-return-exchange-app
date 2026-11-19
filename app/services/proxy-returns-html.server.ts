@@ -129,6 +129,17 @@ const STYLES = `<style>
 details.glr-card > summary { cursor: pointer; font-weight: 600; }
 details.glr-card[open] > summary { margin-bottom: 1rem; }
 details.glr-card > .glr-card { border: 0; padding: 0; }
+.glr-section { margin: 1.5rem 0; }
+.glr-item { border: 1px solid rgba(var(--color-foreground, 0,0,0), .12); border-radius: 4px; padding: .75rem 1rem; }
+.glr-item--disabled { opacity: .6; }
+.glr-item__fields { display: flex; flex-direction: column; gap: .75rem; margin: .75rem 0 0 1.6rem; }
+.glr-item:has(input[name="selected"]):not(:has(input[name="selected"]:checked)) .glr-item__fields { display: none; }
+.glr-row { display: flex; flex-direction: column; gap: .3rem; }
+.glr-row label { font-weight: 600; font-size: .95em; }
+.glr-row select, .glr-row textarea { width: 100%; max-width: 100%; box-sizing: border-box; padding: .5rem .75rem; }
+.glr-row .glr-muted { margin: 0; }
+.glr-textarea { min-height: 5rem; resize: vertical; }
+.glr-link { background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; color: inherit; }
 </style>`;
 
 /** Wraps a screen in the page container. Shopify adds the theme header/footer. */
