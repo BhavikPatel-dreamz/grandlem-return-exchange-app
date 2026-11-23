@@ -6,13 +6,15 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
-import { sendEmail } from "../services/email.server";
+import { sendEmail, renderTemplate } from "../services/email.server";
+import { getOrCreateSettings, updateSettings } from "../services/settings.server";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const templates = await listEmailTemplates(session.shop);
-  return { shop: session.shop, templates, returnsUrl: storefrontReturnsUrl(session.shop) };
+  const settings = await getOrCreateSettings(session.shop);
+  return { shop: session.shop, templates, emailFrom: settings.emailFrom || "", returnsUrl: storefrontReturnsUrl(session.shop) };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -21,6 +23,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = String(formData.get("_action") || "");
   try {
+    if (intent === "save_sender_email") {
+      const emailFrom = String(formData.get("emailFrom") || "").trim();
+      if (!emailFrom) return { ok: false, message: "Enter a company sender email address" };
+      await updateSettings(shop, { emailFrom });
+      return { ok: true, message: "Company sender email saved" };
+    }
     if (intent === "save_template") {
       await upsertEmailTemplate(shop, {
         id: String(formData.get("id") || "") || undefined,
@@ -37,10 +45,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (intent === "test_send") {
       const to = String(formData.get("testEmail") || "");
-      const subject = String(formData.get("subject") || "Test");
-      const body = String(formData.get("body") || "");
-      await sendEmail(to, subject, body);
-      return { ok: true, message: "Test email sent (logged)" };
+      if (!to) return { ok: false, message: "Enter a test email address" };
+      const templateId = String(formData.get("id") || "");
+      const templateEvent = String(formData.get("event") || "");
+      const templateLanguage = String(formData.get("language") || "en");
+      const templateSubject = String(formData.get("subject") || "Test");
+      const templateBody = String(formData.get("body") || "");
+      if (templateId && templateEvent) {
+        await upsertEmailTemplate(shop, {
+          id: templateId,
+          event: templateEvent,
+          language: templateLanguage,
+          subject: templateSubject,
+          body: templateBody,
+        });
+      }
+      // Use test variables so email has content during testing
+      const testVars = {
+        orderNumber: "#1021",
+        requestNumber: "GLM-1021",
+        customerName: "Test Customer",
+        items: "Jacket, Blue Shirt",
+        labelLink: "",
+        trackingLink: "",
+        returnsUrl: "/returns",
+      };
+      const subject = renderTemplate(
+        templateSubject,
+        testVars
+      );
+      const body = renderTemplate(
+        templateBody,
+        testVars
+      );
+      const settings = await getOrCreateSettings(shop);
+      const result = await sendEmail(to, subject, body, settings.emailFrom || undefined);
+      return { ok: result.ok, message: result.ok ? "Template saved and test email sent" : "Template saved, but test email could not be sent" };
     }
     return { ok: false, message: "Unknown action" };
   } catch (e) {
@@ -56,14 +96,34 @@ const EVENT_OPTIONS = [
 function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
+  const [htmlMode, setHtmlMode] = useState(false);
+  const [htmlSource, setHtmlSource] = useState(initial || "");
 
   useEffect(() => {
-    if (editorRef.current) editorRef.current.innerHTML = initial || "";
-    if (hiddenRef.current) hiddenRef.current.value = initial || "";
+    const value = initial || "";
+    if (editorRef.current) editorRef.current.innerHTML = value;
+    if (hiddenRef.current) hiddenRef.current.value = value;
+    setHtmlSource(value);
   }, [initial]);
 
   const sync = () => {
-    if (editorRef.current && hiddenRef.current) hiddenRef.current.value = editorRef.current.innerHTML;
+    if (!editorRef.current) return;
+    const value = editorRef.current.innerHTML;
+    if (hiddenRef.current) hiddenRef.current.value = value;
+    setHtmlSource(value);
+  };
+
+  const showHtmlSource = () => {
+    const value = editorRef.current?.innerHTML ?? htmlSource;
+    setHtmlSource(value);
+    if (hiddenRef.current) hiddenRef.current.value = value;
+    setHtmlMode(true);
+  };
+
+  const showVisualEditor = () => {
+    if (editorRef.current) editorRef.current.innerHTML = htmlSource;
+    if (hiddenRef.current) hiddenRef.current.value = htmlSource;
+    setHtmlMode(false);
   };
 
   const exec = (command: string, value?: string) => {
@@ -71,26 +131,61 @@ function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
     sync();
   };
 
+  const toolBtnStyle: React.CSSProperties = {
+    background: "#ffffff",
+    border: "1px solid #d1d5db",
+    borderRadius: 5,
+    padding: "4px 10px",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#374151",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 1.3,
+    transition: "all 0.15s ease",
+  };
+
   return (
-    <div style={{ border: "1px solid #ccc", borderRadius: 8, overflow: "hidden" }}>
-      <div style={{ display: "flex", gap: 8, padding: 8, borderBottom: "1px solid #ddd", background: "#f7f7f7", flexWrap: "wrap" }}>
-        <button type="button" onClick={() => exec("bold")}><strong>B</strong></button>
-        <button type="button" onClick={() => exec("italic")}><em>I</em></button>
-        <button type="button" onClick={() => exec("underline")}><u>U</u></button>
-        <button type="button" onClick={() => exec("insertUnorderedList")}>• List</button>
-        <button type="button" onClick={() => {
-          const url = window.prompt("Link URL");
-          if (url) exec("createLink", url);
-        }}>Link</button>
-        <button type="button" onClick={() => exec("undo")}>Undo</button>
+    <div style={{ border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden", background: "#ffffff" }}>
+      <div style={{ display: "flex", gap: 6, padding: "8px 10px", borderBottom: "1px solid #e5e7eb", background: "#f9fafb", flexWrap: "wrap", alignItems: "center" }}>
+        {htmlMode ? (
+          <button type="button" onClick={showVisualEditor} style={toolBtnStyle}>Visual editor</button>
+        ) : (
+          <>
+            <button type="button" onClick={() => exec("bold")} style={toolBtnStyle} title="Bold"><strong>B</strong></button>
+            <button type="button" onClick={() => exec("italic")} style={toolBtnStyle} title="Italic"><em>I</em></button>
+            <button type="button" onClick={() => exec("underline")} style={toolBtnStyle} title="Underline"><u>U</u></button>
+            <button type="button" onClick={() => exec("insertUnorderedList")} style={toolBtnStyle} title="List">• List</button>
+            <button type="button" onClick={() => {
+              const url = window.prompt("Link URL");
+              if (url) exec("createLink", url);
+            }} style={toolBtnStyle} title="Link">Link</button>
+            <button type="button" onClick={() => exec("undo")} style={toolBtnStyle} title="Undo">Undo</button>
+            <button type="button" onClick={showHtmlSource} style={toolBtnStyle} title="HTML source">HTML source</button>
+          </>
+        )}
       </div>
       <div
         ref={editorRef}
         contentEditable
         onInput={sync}
-        style={{ minHeight: 180, padding: 12, outline: "none" }}
+        style={{ minHeight: 180, padding: 14, outline: "none", fontSize: 13, lineHeight: 1.6, color: "#111827", display: htmlMode ? "none" : "block" }}
       />
-      <input ref={hiddenRef} type="hidden" name={name} defaultValue={initial || ""} />
+      {htmlMode && (
+        <textarea
+          name={name}
+          aria-label="Email HTML source"
+          value={htmlSource}
+          onChange={(event) => {
+            setHtmlSource(event.currentTarget.value);
+            if (hiddenRef.current) hiddenRef.current.value = event.currentTarget.value;
+          }}
+          style={{ display: "block", boxSizing: "border-box", width: "100%", minHeight: 180, padding: 14, border: 0, outline: "none", resize: "vertical", fontFamily: "monospace", fontSize: 13, background: "#fafafa" }}
+        />
+      )}
+      <input ref={hiddenRef} type="hidden" name={htmlMode ? undefined : name} defaultValue={initial || ""} />
     </div>
   );
 }
@@ -98,6 +193,7 @@ function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
 export default function EmailTemplatesPage() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const templateActionRef = useRef<HTMLInputElement>(null);
 
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -192,6 +288,34 @@ export default function EmailTemplatesPage() {
               </button>
             </div>
 
+            <Form method="post" style={{ display: "flex", alignItems: "end", gap: 12, marginBottom: 20 }}>
+              <input type="hidden" name="_action" value="save_sender_email" />
+              <div style={{ flex: "1 1 320px", maxWidth: 480 }}>
+                <label htmlFor="company-sender-email" style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 500 }}>
+                  Company sender email <span aria-hidden="true">*</span>
+                </label>
+                <input
+                  id="company-sender-email"
+                  type="email"
+                  name="emailFrom"
+                  autoComplete="email"
+                  required
+                  defaultValue={data.emailFrom}
+                  className="returbo-detail-input"
+                  style={{ boxSizing: "border-box", width: "100%" }}
+                />
+              </div>
+              <button type="submit" className="returbo-btn-primary">Save sender email</button>
+              {actionData?.message === "Company sender email saved" && (
+                <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#15803d", fontSize: 13, fontWeight: 600 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Saved
+                </span>
+              )}
+            </Form>
+
             {data.templates.length === 0 ? (
               <p className="returbo-empty-state">No notification emails yet. Add a template to start communicating with customers.</p>
             ) : (
@@ -238,25 +362,72 @@ export default function EmailTemplatesPage() {
           </div>
           <Form method="post">
             <input type="hidden" name="_action" value="save_template" />
-            <s-stack direction="block" gap="base">
-              <s-select name="event" label="Event">
-                {EVENT_OPTIONS.map((e) => <s-option key={e} value={e}>{e}</s-option>)}
-              </s-select>
-              <s-select name="language" label="Language">
-                <s-option value="en">English</s-option>
-                <s-option value="sv">Swedish</s-option>
-              </s-select>
-              <s-text-field name="subject" label="Subject" />
-              <RichTextEditor name="body" />
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <div>
-                  <s-button type="submit" variant="primary">Create</s-button>
-                </div>
-                <div>
-                  <s-button variant="tertiary" onClick={() => setMode("list")}>Cancel</s-button>
-                </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Event
+                </label>
+                <select
+                  name="event"
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  {EVENT_OPTIONS.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </s-stack>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Language
+                </label>
+                <select
+                  name="language"
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  <option value="en">English</option>
+                  <option value="sv">Swedish</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  name="subject"
+                  required
+                  placeholder="e.g. We received your return request ({{orderNumber}})"
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Content
+                </label>
+                <RichTextEditor name="body" />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 6, alignItems: "center" }}>
+                <button type="submit" className="returbo-btn-primary">
+                  Create template
+                </button>
+                <button
+                  type="button"
+                  className="returbo-btn-secondary"
+                  onClick={() => setMode("list")}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </Form>
         </div>
       )}
@@ -268,49 +439,143 @@ export default function EmailTemplatesPage() {
             <p className="returbo-card-subtitle">Update email subject, content, and test email delivery.</p>
           </div>
           <Form method="post">
-            <input type="hidden" name="_action" value="save_template" />
+            <input ref={templateActionRef} type="hidden" name="_action" defaultValue="save_template" />
             <input type="hidden" name="id" value={editingTemplate.id} />
-            <s-stack direction="block" gap="base">
-              <s-select name="event" label="Event" value={editingTemplate.event}>
-                {EVENT_OPTIONS.map((e) => <s-option key={e} value={e}>{e}</s-option>)}
-              </s-select>
-              <s-select name="language" label="Language" value={editingTemplate.language}>
-                <s-option value="en">English</s-option>
-                <s-option value="sv">Swedish</s-option>
-              </s-select>
-              <s-text-field name="subject" label="Subject" value={editingTemplate.subject} />
-              <RichTextEditor name="body" initial={editingTemplate.body} />
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <div>
-                  <s-button type="submit" variant="primary">Save</s-button>
-                </div>
-                <div>
-                  <s-button variant="tertiary" onClick={() => { setMode("list"); setEditingId(null); }}>Back to list</s-button>
-                </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Event
+                </label>
+                <select
+                  name="event"
+                  defaultValue={editingTemplate.event}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  {EVENT_OPTIONS.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </s-stack>
-          </Form>
-          <div style={{ borderTop: "1px solid var(--returbo-border)", marginTop: 20, paddingTop: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 12px 0" }}>Test Email Delivery</h3>
-            <Form method="post">
-              <input type="hidden" name="_action" value="test_send" />
-              <input type="hidden" name="subject" value={editingTemplate.subject} />
-              <input type="hidden" name="body" value={editingTemplate.body} />
-              <s-stack direction="inline" gap="base">
-                <s-text-field name="testEmail" label="Test email address" />
-                <div>
-                  <s-button type="submit" variant="tertiary">Test send</s-button>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Language
+                </label>
+                <select
+                  name="language"
+                  defaultValue={editingTemplate.language}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  <option value="en">English</option>
+                  <option value="sv">Swedish</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  name="subject"
+                  required
+                  defaultValue={editingTemplate.subject}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Content
+                </label>
+                <RichTextEditor name="body" initial={editingTemplate.body} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 6, alignItems: "center" }}>
+                <button
+                  type="submit"
+                  className="returbo-btn-primary"
+                  onClick={() => {
+                    if (templateActionRef.current) templateActionRef.current.value = "save_template";
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className="returbo-btn-secondary"
+                  onClick={() => {
+                    setMode("list");
+                    setEditingId(null);
+                  }}
+                >
+                  Back to list
+                </button>
+              </div>
+            </div>
+
+          <div style={{ borderTop: "1px solid #f3f4f6", marginTop: 28, paddingTop: 20 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 4px 0", color: "#111827" }}>
+              Test Email Delivery
+            </h3>
+            <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 14px 0" }}>
+              Send a test email using sample order data to verify your template layout and delivery.
+            </p>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 300px", maxWidth: 440 }}>
+                  <label htmlFor="test-email-address" style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                    Test email address
+                  </label>
+                  <input
+                    id="test-email-address"
+                    type="email"
+                    name="testEmail"
+                    placeholder="e.g. yourname@example.com"
+                    className="returbo-detail-input"
+                    style={{ width: "100%", height: 38 }}
+                  />
                 </div>
-              </s-stack>
-            </Form>
+                <button
+                  type="submit"
+                  className="returbo-btn-primary"
+                  style={{ height: 38, padding: "8px 20px" }}
+                  onClick={() => {
+                    if (templateActionRef.current) templateActionRef.current.value = "test_send";
+                  }}
+                >
+                  Test send
+                </button>
+              </div>
           </div>
-          <div style={{ borderTop: "1px solid var(--returbo-border)", marginTop: 16, paddingTop: 16 }}>
-            <Form method="post">
+          </Form>
+
+          <div style={{ borderTop: "1px solid #f3f4f6", marginTop: 24, paddingTop: 20 }}>
+            <Form
+              method="post"
+              onSubmit={(e) => {
+                if (!window.confirm("Are you sure you want to delete this template?")) {
+                  e.preventDefault();
+                }
+              }}
+            >
               <input type="hidden" name="_action" value="delete_template" />
               <input type="hidden" name="id" value={editingTemplate.id} />
-              <div>
-                <s-button type="submit" variant="tertiary">Delete template</s-button>
-              </div>
+              <button
+                type="submit"
+                className="returbo-btn-danger-outline"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Delete template
+              </button>
             </Form>
           </div>
         </div>

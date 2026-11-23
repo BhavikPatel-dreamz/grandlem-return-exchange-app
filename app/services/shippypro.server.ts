@@ -182,17 +182,28 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
 
       const warehouseMap = parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {});
       const marketKey = (rr.market || "DEFAULT").toUpperCase();
-      const warehouse = warehouseMap[marketKey] || warehouseMap["DEFAULT"] || Object.values(warehouseMap)[0] || {};
+      // Prefer warehouse from original shipment, fall back to settings, then generic "Warehouse"
+      let warehouse: Record<string, string> = {};
+      if (original && original.warehouseCountry) {
+        warehouse = { country: original.warehouseCountry, city: original.warehouseCity || "" };
+      } else {
+        warehouse = warehouseMap[marketKey] || warehouseMap["DEFAULT"] || Object.values(warehouseMap)[0] || { country: "", city: "" };
+      }
 
       const shippingAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
 
-      const customs = rr.items.map((it) => ({
-        Description: it.title || "Returned item",
-        Quantity: it.quantity,
-        Value: it.priceDifferenceStr || "0",
-        OriginCountry: warehouse["country"] || "",
-        HSCode: "",
-      }));
+      const customs = rr.items.map((it) => {
+        const itemAny = it as unknown as { variant?: { inventoryItem?: { harmonizedSystemCode?: string; countryCodeOfOrigin?: string } } };
+        const hsCode = itemAny.variant?.inventoryItem?.harmonizedSystemCode?.trim() || "";
+        const originCountry = itemAny.variant?.inventoryItem?.countryCodeOfOrigin?.trim() || warehouse["country"] || "";
+        return {
+          Description: it.title || "Returned item",
+          Quantity: it.quantity,
+          Value: it.priceDifferenceStr || "0",
+          OriginCountry: originCountry,
+          HSCode: hsCode,
+        };
+      });
 
       const params = {
         CarrierID: routing.carrierId,

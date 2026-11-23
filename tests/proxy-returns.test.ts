@@ -25,6 +25,7 @@ const world = vi.hoisted(() => {
     settings: {} as Record<string, Record<string, unknown>>,
     reasons: [] as Record<string, unknown>[],
     returnRequests: [] as Record<string, any>[],
+    labelAttempts: [] as string[],
     sentEmails: [] as { shop: string; event: string; to: string }[],
   };
   return { state };
@@ -36,6 +37,7 @@ const SETTINGS_DEFAULTS = {
   returnDeadlineDays: 30,
   exchangeDeadlineDays: 30,
   complaintDeadlineDays: 60,
+  autoApproveRequests: false,
   deflectionEnabled: false,
   storeCreditEnabled: true,
   storeCreditBonusPercent: 10,
@@ -91,6 +93,13 @@ vi.mock("../app/services/email.server", () => ({
   sendEventEmail: async (shop: string, event: string, _lang: string, to: string) => {
     state.sentEmails.push({ shop, event, to });
     return { ok: true };
+  },
+}));
+
+vi.mock("../app/services/shippypro.server", () => ({
+  createReturnLabel: async (returnRequestId: string) => {
+    state.labelAttempts.push(returnRequestId);
+    return { ok: false, error: "No carrier in test" };
   },
 }));
 
@@ -369,6 +378,7 @@ const tokenFrom = (html: string) => html.match(/name="orderToken" value="([^"]+)
 
 function seed() {
   state.returnRequests = [];
+  state.labelAttempts = [];
   state.sentEmails = [];
   state.settings = {};
   state.reasons = [
@@ -507,7 +517,8 @@ describe("guest lookup", () => {
       orderNumber: "1001",
       email: "mallory@example.com",
     });
-    expect(lookupHtml).toContain("We couldn\u2019t find that order.");
+    expect(lookupHtml).toContain("It seems like the order number and/or email you have entered did not match our records. Please double-check and try again.");
+    expect(lookupHtml).toContain('<span class="glr-error-icon" aria-hidden="true">!</span>');
     expect(lookupHtml).not.toContain("Email does not match");
     expect(lookupHtml).not.toContain("Wool Sweater");
   });
@@ -518,7 +529,7 @@ describe("guest lookup", () => {
       orderNumber: "7777",
       email: "alice@example.com",
     });
-    expect(lookupHtml).toContain("We couldn\u2019t find that order.");
+    expect(lookupHtml).toContain("It seems like the order number and/or email you have entered did not match our records. Please double-check and try again.");
   });
 
   it("unfulfilled order keeps its specific message", async () => {
@@ -572,7 +583,7 @@ describe("logged-in customer", () => {
       { _stage: "select_order", orderId: "gid://shopify/Order/1002" },
       { customerId: "501" },
     );
-    expect(selectHtml).toContain("We couldn\u2019t find that order.");
+    expect(selectHtml).toContain("It seems like the order number and/or email you have entered did not match our records. Please double-check and try again.");
     expect(selectHtml).not.toContain("Linen Shirt");
     expect(tokenFrom(selectHtml)).toBeNull();
   });
@@ -621,6 +632,25 @@ describe("submit", () => {
     expect(rr.items[0]).toMatchObject({ quantity: 2, reasonId: "r_size" });
     expect(html).toContain(rr.requestNumber);
     expect(state.sentEmails).toEqual([{ shop: SHOP_A, event: "received", to: "alice@example.com" }]);
+  });
+
+  it("automatically approves requests and attempts a label when enabled", async () => {
+    state.settings[SHOP_A] = { autoApproveRequests: true };
+    const token = await guestToken();
+    await post(SHOP_A, {
+      _stage: "submit",
+      orderToken: token,
+      resolution: "store_credit",
+      selected: ["gid://shopify/LineItem/1"],
+      "qty_gid://shopify/LineItem/1": "1",
+      "reason_gid://shopify/LineItem/1": "r_size",
+    });
+
+    expect(state.returnRequests).toHaveLength(1);
+    expect(state.returnRequests[0].status).toBe("Approved");
+    expect(state.returnRequests[0].approvedAt).toBeInstanceOf(Date);
+    expect(state.labelAttempts).toEqual(["rr_1"]);
+    expect(state.sentEmails).toEqual([{ shop: SHOP_A, event: "approved", to: "alice@example.com" }]);
   });
 
   it("a second submit for the same items is rejected (already returned)", async () => {

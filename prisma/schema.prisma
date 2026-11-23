@@ -59,6 +59,8 @@ model Settings {
   returnDeadlineDays    Int      @default(14)
   exchangeDeadlineDays  Int      @default(14)
   complaintDeadlineDays    Int      @default(14)
+  autoApproveRequests      Boolean  @default(false)
+  emailFrom                String?
   // Phase 12: refunds
   autoRefundOnInspection Boolean @default(false)
   refundShippingCost      Boolean @default(false)

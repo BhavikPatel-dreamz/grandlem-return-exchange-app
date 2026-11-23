@@ -36,7 +36,11 @@ import {
   type Resolution,
   type ResolutionChoices,
 } from "../services/proxy-resolutions.server";
-import { getLabelTimingForMarket, getOrCreateSettings } from "../services/settings.server";
+import {
+  getLabelTimingForMarket,
+  getOrCreateSettings,
+  getReturnImageCommentConfig,
+} from "../services/settings.server";
 import { getEffectiveDeadline, isExpired } from "../services/validation.server";
 import { createReturnRequest } from "../services/returns.server";
 import { createReturnLabel } from "../services/shippypro.server";
@@ -115,7 +119,7 @@ const COPY = {
     confirmExchangeRequest: "Confirm exchange request",
     confirmComplaintRequest: "Confirm complaint request",
     agreePolicy: (shop: string) => `By confirming you agree to ${shop}'s `,
-    notFound: "We couldn’t find that order.",
+    notFound: "It seems like the order number and/or email you have entered did not match our records. Please double-check and try again.",
     unknownStage: "Something went wrong. Please start again.",
     verifiedHeading: "Order found",
     order: "Order",
@@ -226,7 +230,7 @@ changeType: "Change request type",
     confirmExchangeRequest: "Bekräfta bytesförfrågan",
     confirmComplaintRequest: "Bekräfta reklamation",
     agreePolicy: (shop: string) => `Genom att bekräfta godkänner du ${shop}s `,
-    notFound: "Vi kunde inte hitta den ordern.",
+    notFound: "Ordernumret och/eller e-postadressen verkar inte stämma med våra uppgifter. Kontrollera uppgifterna och försök igen.",
     unknownStage: "Något gick fel. Börja om.",
     verifiedHeading: "Order hittad",
     order: "Order",
@@ -299,9 +303,7 @@ type LookupValues = { requestType?: ProxyRequestType; orderNumber?: string; emai
 function guestLookupCard(ctx: ProxyContext, values: LookupValues = {}, error?: string): string {
   const t = COPY[ctx.lang];
   const isFilled = Boolean(values.orderNumber?.trim() && values.email?.trim());
-  const inner =
-    errorBox(error) +
-    `<div class="glr-field-wrap">
+  const inner = `<div class="glr-field-wrap">
   <label class="glr-field-label" for="glr-orderNumber">${esc(t.orderNumber)}</label>
   <input class="glr-field-input" id="glr-orderNumber" name="orderNumber" type="text"
     value="${esc(values.orderNumber ?? "")}" placeholder="${esc(t.orderNumberPlaceholder)}" required>
@@ -311,6 +313,7 @@ function guestLookupCard(ctx: ProxyContext, values: LookupValues = {}, error?: s
   <input class="glr-field-input" id="glr-email" name="email" type="text"
     value="${esc(values.email ?? "")}" placeholder="${esc(t.emailPlaceholder)}" required autocomplete="email">
 </div>
+${errorBox(error)}
 <div class="glr-button-wrap">
   <button type="submit" class="glr-submit-button ${isFilled ? "glr-btn-active" : ""}">${esc(t.findOrder)}</button>
 </div>
@@ -697,8 +700,28 @@ function detailsScreen(
 
   // 4. Request details rows for Card 2
   const primaryReasonId = Object.values(values?.reason ?? {})[0] || (model.reasons[0]?.id ?? "");
-  const primaryReasonObj = model.reasons.find((r) => r.id === primaryReasonId);
-  const primaryReasonLabel = primaryReasonObj ? primaryReasonObj.label : "";
+  const reasonDetailsRows = Array.from(selectedIds)
+    .map((id) => {
+      const li = result.order.lineItems.find((item) => item.id === id);
+      const reasonId = values?.reason[id] || primaryReasonId;
+      const reason = model.reasons.find((item) => item.id === reasonId);
+      const label = selectedIds.size > 1 ? `${li?.title ?? t.reasonLabel}: ${t.reasonLabel}` : t.reasonLabel;
+      return `
+        <div class="glr-details-row">
+          <div class="glr-details-label-col">
+            <span class="glr-details-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+            </span>
+            <span>${esc(label)}</span>
+          </div>
+          <div class="glr-details-value-col">${esc(reason?.label || "—")}</div>
+        </div>
+      `;
+    })
+    .join("");
 
   const primaryComment = Object.values(values?.comment ?? {}).find((c) => Boolean(c)) || "";
 
@@ -871,18 +894,7 @@ function detailsScreen(
           <div class="glr-details-value-col">${esc(t.types[result.requestType])}</div>
         </div>
 
-        <div class="glr-details-row">
-          <div class="glr-details-label-col">
-            <span class="glr-details-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                <line x1="7" y1="7" x2="7.01" y2="7"/>
-              </svg>
-            </span>
-            <span>${esc(t.reasonLabel)}</span>
-          </div>
-          <div class="glr-details-value-col">${esc(primaryReasonLabel || "—")}</div>
-        </div>
+        ${reasonDetailsRows}
 
         <div class="glr-details-row">
           <div class="glr-details-label-col">
@@ -963,15 +975,66 @@ function confirmationScreen(
       : requestType === "exchange"
         ? t.nextExchange
         : t.nextReturn;
-  const body = card(
-    `<dl class="glr-meta"><dt>${esc(t.requestNumber)}</dt><dd><strong>${esc(requestNumber)}</strong></dd></dl>
-<p>${esc(next)}</p>
-${labelUrl ? `<p><a href="${esc(labelUrl)}" target="_blank" rel="noreferrer">Download return label</a></p>` : ""}
-<p class="glr-muted">${esc(t.confirmedEmail)}</p>
-<div class="glr-actions"><a class="button button--secondary" href="?">${esc(t.startAnother)}</a></div>`,
-    t.confirmedHeading,
-  );
-  return page({ title: t.title, body });
+
+  const cardHtml = `
+    <div class="glr-conf-card">
+      <div class="glr-conf-icon-wrap">
+        <svg width="76" height="76" viewBox="0 0 76 76" fill="none">
+          <circle cx="38" cy="42" r="28" fill="#FCE7F3" fill-opacity="0.7"/>
+          <circle cx="38" cy="42" r="16" stroke="#DE4066" stroke-width="2.2" fill="#FFFFFF"/>
+          <path d="M31 42L36 47L45 37" stroke="#DE4066" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="58" y1="18" x2="64" y2="12" stroke="#DE4066" stroke-width="2.2" stroke-linecap="round"/>
+          <line x1="50" y1="17" x2="53" y2="10" stroke="#DE4066" stroke-width="2.2" stroke-linecap="round"/>
+          <line x1="62" y1="26" x2="69" y2="26" stroke="#DE4066" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <h2 class="glr-conf-title">${esc(t.confirmedHeading)}</h2>
+
+      <div class="glr-conf-number-strip">
+        <div class="glr-conf-number-left">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#de4066" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/>
+          </svg>
+          <span>${esc(t.requestNumber)}</span>
+        </div>
+        <div class="glr-conf-divider"></div>
+        <strong class="glr-conf-number-value">${esc(requestNumber)}</strong>
+      </div>
+
+      <p class="glr-conf-next-text">${esc(next)}</p>
+
+      ${labelUrl ? `<div style="margin: 0 auto 20px auto;"><a href="${esc(labelUrl)}" target="_blank" rel="noreferrer" class="button button--secondary">Download return label</a></div>` : ""}
+
+      <div class="glr-conf-email-banner">
+        <div class="glr-conf-email-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#de4066" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
+        <span>${esc(t.confirmedEmail)}</span>
+      </div>
+
+      <div style="text-align:center;">
+        <a class="glr-conf-btn" href="?">
+          <span>${esc(t.startAnother)}</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+            <polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  `;
+
+  return page({
+    title: t.title,
+    lead: t.lead,
+    body: cardHtml,
+    isTypeSelectPage: true,
+    lang: ctx.lang,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,7 +1067,8 @@ async function handleGuestLookup(request: Request, ctx: ProxyContext, formData: 
     return await startScreen(ctx, { error: lookupErrorMessage(ctx, basicResult.code), values });
   }
 
-  return orderFoundScreen(ctx, basicResult, values);
+  const settings = await getOrCreateSettings(ctx.shop);
+  return orderFoundScreen(ctx, basicResult, values, {}, settings);
 }
 
 function lookupErrorMessage(ctx: ProxyContext, code: string): string {
@@ -1018,6 +1082,7 @@ function orderFoundScreen(
   result: PortalOrderResult,
   back: LookupValues,
   opts: { error?: string } = {},
+  settings?: { labelTimingPerMarket?: string | null },
 ): string {
   const order = result.order;
   const t = COPY[ctx.lang];
@@ -1151,7 +1216,7 @@ function orderFoundScreen(
     const reasonItems = order.lineItems
       .filter((li) => !li.excluded)
       .map((li) => `
-        <div class="glr-field-block">
+        <div class="glr-field-block glr-reason-item" data-item-id="${esc(li.id)}" style="display: none;">
           <label class="glr-form-label">${esc(t.reason)} <span class="glr-required">*</span></label>
           <div class="glr-select-wrap">
             <select name="reason_${esc(li.id)}" class="glr-custom-select" required>
@@ -1179,8 +1244,13 @@ function orderFoundScreen(
 <input type="hidden" name="email" value="${esc(back.email)}">`;
 
   // 8. Comment & photo blocks
+  const returnAttachConfig = getReturnImageCommentConfig(settings);
+  const photoInstructionsText = returnAttachConfig.includeInstructions && returnAttachConfig.instructions
+    ? `<div style="font-size:12px;color:#6b7280;margin-bottom:8px;">${esc(returnAttachConfig.instructions)}</div>`
+    : "";
+
   const commentSection = `
-    <div class="glr-field-block return-comment-photo-row">
+    <div class="glr-field-block return-comment-row">
       <label class="glr-form-label">${esc(COPY[ctx.lang].comment)}</label>
       <div class="glr-textarea-wrap">
         <textarea
@@ -1197,8 +1267,9 @@ function orderFoundScreen(
   `;
 
   const photoSection = `
-    <div class="glr-field-block return-comment-photo-row">
+    <div class="glr-field-block return-photo-row">
       <label class="glr-form-label">${esc(COPY[ctx.lang].photos)}</label>
+      ${photoInstructionsText}
       <div class="glr-dropzone" id="glr-dropzone">
         <div class="glr-dropzone-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1236,20 +1307,35 @@ function orderFoundScreen(
 <script>
   (function() {
     function initTypeSelect() {
+      var returnAttachConfig = ${JSON.stringify(returnAttachConfig)};
       var cards = document.querySelectorAll('.glr-type-card');
       var sections = document.querySelectorAll('.glr-reason-section');
-      var commentPhotoRows = document.querySelectorAll('.return-comment-photo-row');
+      var commentRows = document.querySelectorAll('.return-comment-row');
+      var photoRows = document.querySelectorAll('.return-photo-row');
       var commentField = document.getElementById('glr-comment-field');
       var charCount = document.getElementById('glr-char-count');
       var fileInput = document.getElementById('glr-photo-input');
       var fileInfo = document.getElementById('glr-files-selected-text');
       var dropzone = document.getElementById('glr-dropzone');
       var itemCheckboxes = document.querySelectorAll('input[name="selected"]');
+      var reasonFields = document.querySelectorAll('.glr-reason-item');
 
       function updateItemSelection() {
-        if (itemCheckboxes.length < 2) return;
         var hasSelection = Array.from(itemCheckboxes).some(function(input) { return input.checked; });
-        itemCheckboxes[0].required = !hasSelection;
+        var checkedType = document.querySelector('input[name="requestType"]:checked');
+        var selectedType = checkedType ? checkedType.value : 'return';
+        if (itemCheckboxes.length) itemCheckboxes[0].required = !hasSelection;
+        reasonFields.forEach(function(field) {
+          var checkbox = Array.from(itemCheckboxes).find(function(input) {
+            return input.value === field.dataset.itemId;
+          });
+          var selected = checkbox && checkbox.checked;
+          var typeMatches = field.parentElement && field.parentElement.dataset.requestType === selectedType;
+          var visible = Boolean(selected && typeMatches);
+          field.style.display = visible ? 'block' : 'none';
+          var reasonSelect = field.querySelector('select');
+          if (reasonSelect) reasonSelect.required = visible;
+        });
       }
 
       itemCheckboxes.forEach(function(input) {
@@ -1270,9 +1356,30 @@ function orderFoundScreen(
         sections.forEach(function(sec) {
           sec.style.display = sec.dataset.requestType === selectedVal ? 'block' : 'none';
         });
-        commentPhotoRows.forEach(function(row) {
-          row.style.display = selectedVal === 'return' || selectedVal === 'complaint' ? 'block' : 'none';
+        var showCommentForReturn = Boolean(returnAttachConfig.enabled && returnAttachConfig.commentMode !== 'disabled');
+        var showPhotoForReturn = Boolean(returnAttachConfig.enabled && returnAttachConfig.imageUploadMode !== 'disabled');
+
+        commentRows.forEach(function(row) {
+          if (selectedVal === 'complaint') {
+            row.style.display = 'block';
+          } else if (selectedVal === 'return') {
+            row.style.display = showCommentForReturn ? 'block' : 'none';
+          } else {
+            row.style.display = 'none';
+          }
         });
+
+        photoRows.forEach(function(row) {
+          if (selectedVal === 'complaint') {
+            row.style.display = 'block';
+          } else if (selectedVal === 'return') {
+            row.style.display = showPhotoForReturn ? 'block' : 'none';
+          } else {
+            row.style.display = 'none';
+          }
+        });
+
+        updateItemSelection();
       }
 
       cards.forEach(function(card) {
@@ -1393,7 +1500,8 @@ async function handleSelectOrder(request: Request, ctx: ProxyContext, formData: 
     orderNumber: basicResult.order.name,
     email: basicResult.order.email || "",
   };
-  return orderFoundScreen(ctx, basicResult, back);
+  const settings = await getOrCreateSettings(ctx.shop);
+  return orderFoundScreen(ctx, basicResult, back, {}, settings);
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -1457,6 +1565,16 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
       return fail(t.needComment(settings.claimMinCommentLength, li.title));
     }
 
+    const returnAttachConfig = getReturnImageCommentConfig(settings);
+    if (!isComplaint && returnAttachConfig.enabled) {
+      if (returnAttachConfig.imageUploadMode === "mandatory" && photos.length === 0) {
+        return fail(t.needPhotos(1, li.title));
+      }
+      if (returnAttachConfig.commentMode === "mandatory" && !comment) {
+        return fail(t.needComment(3, li.title));
+      }
+    }
+
     items.push({
       shopifyLineItemId: li.id,
       productId: li.productId,
@@ -1481,6 +1599,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
       customerEmail: result.order.email,
       customerName: null,
       type: token.requestType,
+      autoApprove: settings.autoApproveRequests,
       items,
     });
     await prisma.returnRequest.update({
@@ -1494,7 +1613,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
 
   let labelUrl: string | null = null;
   let trackingUrl: string | null = null;
-  if (getLabelTimingForMarket(settings.labelTimingPerMarket, result.order.market) === "immediate") {
+  if (settings.autoApproveRequests || getLabelTimingForMarket(settings.labelTimingPerMarket, result.order.market) === "immediate") {
     const generated = await createReturnLabel(created.id);
     if (generated.ok) {
       const label = await prisma.returnLabel.findUnique({ where: { returnRequestId: created.id } });
@@ -1503,13 +1622,21 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
     }
   }
 
-  await sendEventEmail(ctx.shop, "received", ctx.lang, result.order.email || "", {
-    customerName: result.order.email || "customer",
-    orderNumber: result.order.name,
-    items: items.map((it) => it.title).join(", "),
-    labelLink: labelUrl || "",
-    trackingLink: trackingUrl || "",
-  }).catch(() => null);
+  const customerEmail = result.order.email || "";
+  if (!customerEmail) {
+    console.warn("[Return Portal] No customer email found on order, skipping confirmation email");
+  } else {
+    await sendEventEmail(ctx.shop, settings.autoApproveRequests ? "approved" : "received", ctx.lang, customerEmail, {
+      customerName: customerEmail || "customer",
+      orderNumber: result.order.name,
+      requestNumber: created.requestNumber,
+      items: items.map((it) => it.title).join(", "),
+      labelLink: labelUrl || "",
+      trackingLink: trackingUrl || "",
+    }).catch((e) => {
+      console.error("[Return Portal] Failed to send confirmation email:", e);
+    });
+  }
 
   return confirmationScreen(ctx, created.requestNumber ?? "", token.requestType, settings.complaintRequireItemReturn, labelUrl);
 }
