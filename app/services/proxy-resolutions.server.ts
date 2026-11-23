@@ -45,7 +45,6 @@ export function resolutionChoices(
     const options: Resolution[] = [];
     if (!deflect) options.push("refund");
     if (storeCredit) options.push("store_credit");
-    if (exchangeOpen) options.push("exchange");
     return { ...base, options, fixed: null, refundDeflected: deflect };
   }
 

@@ -28,6 +28,8 @@ import {
 } from "../services/deadline-extensions.server";
 import { syncCarriers, setShippyproApiKey, getShippyproConnection } from "../services/shippypro.server";
 
+const ROUTING_MARKETS = ["DEFAULT", "US", "SE", "GB"] as const;
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -53,7 +55,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       claimMinPhotos: settings.claimMinPhotos,
       claimMinCommentLength: settings.claimMinCommentLength,
       labelTimingPerMarket: parseJson<Record<string, string>>(settings.labelTimingPerMarket, {}),
-      defaultReturnMethodPerMarket: parseJson<Record<string, unknown>>(settings.defaultReturnMethodPerMarket, {}),
+      defaultReturnMethodPerMarket: parseJson<Record<string, { carrierId?: string; service?: string }>>(settings.defaultReturnMethodPerMarket, {}),
+      warehouseAddressesPerMarket: parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {}),
     },
     reasons,
     exclusions,
@@ -81,6 +84,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         claimMinCommentLength: Number(formData.get("claimMinCommentLength")),
       });
       return { ok: true, message: "Settings saved" };
+    }
+
+    if (intent === "save_routing_settings") {
+      const current = await getOrCreateSettings(shop);
+      const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
+      const methods = parseJson<Record<string, { carrierId?: string; service?: string }>>(current.defaultReturnMethodPerMarket, {});
+      const warehouses = parseJson<Record<string, Record<string, string>>>(current.warehouseAddressesPerMarket, {});
+
+      for (const market of ROUTING_MARKETS) {
+        timings[market] = String(formData.get(`labelTiming_${market}`) || "after_approval") === "immediate"
+          ? "immediate"
+          : "after_approval";
+
+        const method = {
+          carrierId: String(formData.get(`carrierId_${market}`) || "").trim(),
+          service: String(formData.get(`service_${market}`) || "").trim(),
+        };
+        if (method.carrierId || method.service) methods[market] = method;
+        else delete methods[market];
+
+        const address = Object.fromEntries(
+          ["name", "company", "address1", "address2", "city", "zip", "country"].map((field) => [
+            field,
+            String(formData.get(`${field}_${market}`) || "").trim(),
+          ]),
+        );
+        if (Object.values(address).some(Boolean)) warehouses[market] = address;
+        else delete warehouses[market];
+      }
+
+      await updateSettings(shop, {
+        labelTimingPerMarket: timings as Record<string, "immediate" | "after_approval">,
+        defaultReturnMethodPerMarket: methods,
+        warehouseAddressesPerMarket: warehouses,
+      });
+      return { ok: true, message: "Return routing settings saved" };
     }
 
     if (intent === "create_reason") {
@@ -253,6 +292,43 @@ export function SettingsView() {
             <div>
               <s-button type="submit">Re-sync carriers</s-button>
             </div>
+          </Form>
+        </div>
+
+        <div className="returbo-card">
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">Return labels and routing</h2>
+            <p className="returbo-card-subtitle">Choose when labels are created and configure each destination and fallback carrier by shipping country.</p>
+          </div>
+          <Form method="post">
+            <input type="hidden" name="_action" value="save_routing_settings" />
+            <s-stack direction="block" gap="base">
+              {ROUTING_MARKETS.map((market) => {
+                const address = data.settings.warehouseAddressesPerMarket[market] || {};
+                const method = data.settings.defaultReturnMethodPerMarket[market] || {};
+                return (
+                  <fieldset key={market} style={{ border: "1px solid var(--returbo-border)", borderRadius: 8, padding: 16 }}>
+                    <legend style={{ fontWeight: 600, padding: "0 6px" }}>{market === "DEFAULT" ? "Default fallback" : `${market} shipping country`}</legend>
+                    <s-stack direction="block" gap="base">
+                      <s-select name={`labelTiming_${market}`} label="Label generation timing" value={data.settings.labelTimingPerMarket[market] || "after_approval"}>
+                        <s-option value="after_approval">After admin approval</s-option>
+                        <s-option value="immediate">Immediately after request</s-option>
+                      </s-select>
+                      <s-text-field name={`carrierId_${market}`} label="Fallback ShippyPro Carrier ID" value={method.carrierId || ""} />
+                      <s-text-field name={`service_${market}`} label="Fallback carrier service" value={method.service || ""} />
+                      <s-text-field name={`name_${market}`} label="Return warehouse name" value={address.name || ""} />
+                      <s-text-field name={`company_${market}`} label="Company" value={address.company || ""} />
+                      <s-text-field name={`address1_${market}`} label="Address" value={address.address1 || address.address || ""} />
+                      <s-text-field name={`address2_${market}`} label="Address line 2" value={address.address2 || ""} />
+                      <s-text-field name={`city_${market}`} label="City" value={address.city || ""} />
+                      <s-text-field name={`zip_${market}`} label="Postal code" value={address.zip || ""} />
+                      <s-text-field name={`country_${market}`} label="Country" value={address.country || ""} />
+                    </s-stack>
+                  </fieldset>
+                );
+              })}
+              <s-button type="submit" variant="primary">Save return routing</s-button>
+            </s-stack>
           </Form>
         </div>
       </div>

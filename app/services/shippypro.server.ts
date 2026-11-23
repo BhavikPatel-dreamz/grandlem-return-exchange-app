@@ -4,8 +4,7 @@ import { unauthenticated } from "../shopify.server";
 import { getOrCreateSettings, parseJson } from "./settings.server";
 import { decryptSecret, encryptSecret } from "./crypto.server";
 
-const SHIPPYPRO_URL = process.env.SHIPPYPRO_API_URL || "https://www.shippypro.com/api";
-const SHIPPYPRO_KEY = process.env.SHIPPYPRO_API_KEY || "";
+const DEFAULT_SHIPPYPRO_URL = "https://www.shippypro.com/api";
 
 export type ShippyProResult = { ok: boolean; data?: any; error?: string };
 
@@ -22,16 +21,29 @@ export async function resolveShippyProApiKey(shop?: string | null): Promise<stri
   return process.env.SHIPPYPRO_API_KEY || "";
 }
 
+async function resolveShippyProApiUrl(shop?: string | null): Promise<string> {
+  if (shop) {
+    try {
+      const settings = await getOrCreateSettings(shop);
+      if (settings.shippyproApiUrl) return settings.shippyproApiUrl;
+    } catch {
+      // fall back to env
+    }
+  }
+  return process.env.SHIPPYPRO_API_URL || DEFAULT_SHIPPYPRO_URL;
+}
+
 export async function shippyproCall(method: string, params: Record<string, unknown> = {}, shop?: string | null): Promise<ShippyProResult> {
   const apiKey = await resolveShippyProApiKey(shop);
   if (!apiKey) {
     return { ok: false, error: "SHIPPYPRO_API_KEY not configured" };
   }
   try {
-    const res = await fetch(SHIPPYPRO_URL, {
+    const apiUrl = await resolveShippyProApiUrl(shop);
+    const res = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params, key: SHIPPYPRO_KEY }),
+      body: JSON.stringify({ method, params, key: apiKey }),
     });
     const json = await res.json();
     if (json?.error) return { ok: false, error: String(json.error), data: json };

@@ -94,6 +94,162 @@ vi.mock("../app/services/email.server", () => ({
   },
 }));
 
+vi.mock("../app/services/portal.server", () => {
+  const { state } = world;
+
+  async function basicValidate(shop: string, orderNumber: string, email: string) {
+    const orders = state.orders[shop] ?? [];
+    const o = orders.find((x) => x.name === `#${orderNumber.replace(/^#/, "")}`);
+    if (!o) return { ok: false as const, code: "ORDER_NOT_FOUND" as const, message: "Order not found." };
+    if (!o.email || o.email.toLowerCase() !== email.toLowerCase()) {
+      return { ok: false as const, code: "EMAIL_MISMATCH" as const, message: "Email does not match the order." };
+    }
+    const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(o.displayFulfillmentStatus);
+    if (!fulfilled) return { ok: false as const, code: "NOT_FULFILLED" as const, message: "Order has not been fulfilled yet." };
+    return {
+      ok: true as const,
+      shop,
+      order: { id: o.id, name: o.name, email: o.email, createdAt: o.createdAt, fulfillmentStatus: o.displayFulfillmentStatus, lineItems: o.lineItems.map((li) => ({ ...li, collectionIds: [], excluded: false })) },
+      eligibleLineItemIds: o.lineItems.map((li) => li.id),
+      deadline: new Date().toISOString(),
+      requestType: "return" as const,
+      reasons: [],
+    };
+  }
+
+  async function basicValidateCustomer(shop: string, orderId: string, customerId: string) {
+    const orders = state.orders[shop] ?? [];
+    const o = orders.find((x) => x.id === orderId);
+    if (!o) return { ok: false as const, code: "ORDER_NOT_FOUND" as const, message: "Order not found." };
+    if (o.customerId !== customerId) return { ok: false as const, code: "ORDER_NOT_FOUND" as const, message: "Order not found." };
+    const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(o.displayFulfillmentStatus);
+    if (!fulfilled) return { ok: false as const, code: "NOT_FULFILLED" as const, message: "Order has not been fulfilled yet." };
+    return {
+      ok: true as const,
+      shop,
+      order: { id: o.id, name: o.name, email: o.email, createdAt: o.createdAt, fulfillmentStatus: o.displayFulfillmentStatus, lineItems: o.lineItems.map((li) => ({ ...li, collectionIds: [], excluded: false })) },
+      eligibleLineItemIds: o.lineItems.map((li) => li.id),
+      deadline: new Date().toISOString(),
+      requestType: "return" as const,
+      reasons: [],
+    };
+  }
+
+  // Full validation (used after request type selection)
+  async function fullValidate(shop: string, orderNumber: string, email: string, requestType: string) {
+    const basic = await basicValidate(shop, orderNumber, email);
+    if (!basic.ok) return basic;
+    // Check exclusions based on requestType
+    const orders = state.orders[shop] ?? [];
+    const o = orders.find((x) => x.name === `#${orderNumber.replace(/^#/, "")}`);
+    if (!o) return { ok: false as const, code: "ORDER_NOT_FOUND" as const, message: "Order not found." };
+    // For simplicity, no exclusions in test
+    return {
+      ...basic,
+      requestType: requestType as "return" | "exchange" | "complaint",
+      reasons: state.reasons.filter((r) => r.shop === shop && r.active).map((r) => ({
+        id: r.id,
+        labelEn: r.labelEn,
+        labelSv: r.labelSv,
+        appliesTo: r.appliesTo,
+      })),
+    };
+  }
+
+  async function fullValidateCustomer(shop: string, orderId: string, customerId: string, requestType: string) {
+    const basic = await basicValidateCustomer(shop, orderId, customerId);
+    if (!basic.ok) return basic;
+    const orders = state.orders[shop] ?? [];
+    const o = orders.find((x) => x.id === orderId);
+    if (!o) return { ok: false as const, code: "ORDER_NOT_FOUND" as const, message: "Order not found." };
+    return {
+      ...basic,
+      requestType: requestType as "return" | "exchange" | "complaint",
+      reasons: state.reasons.filter((r) => r.shop === shop && r.active).map((r) => ({
+        id: r.id,
+        labelEn: r.labelEn,
+        labelSv: r.labelSv,
+        appliesTo: r.appliesTo,
+      })),
+    };
+  }
+
+  // Revalidate by order ID (used at submit time)
+  async function revalidateById(shop: string, orderId: string, requestType: string) {
+    const orders = state.orders[shop] ?? [];
+    const o = orders.find((x) => x.id === orderId);
+    if (!o) return { ok: false as const, code: "ORDER_NOT_FOUND" as const, message: "Order not found." };
+    const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(o.displayFulfillmentStatus);
+    if (!fulfilled) return { ok: false as const, code: "NOT_FULFILLED" as const, message: "Order has not been fulfilled yet." };
+
+    // Check already-returned line items (simulate prisma.returnRequest.findMany)
+    const returnedLineItemIds = new Set<string>();
+    for (const r of state.returnRequests) {
+      if (r.shop === shop && (r.shopifyOrderId === orderId || r.shopifyOrderId === o.id)) {
+        for (const it of r.items) {
+          if (it.shopifyLineItemId) returnedLineItemIds.add(it.shopifyLineItemId);
+        }
+      }
+    }
+
+    const lineItems = o.lineItems.map((li) => ({
+      ...li,
+      collectionIds: [],
+      excluded: returnedLineItemIds.has(li.id),
+    }));
+
+    const eligibleLineItemIds = lineItems.filter((li) => !li.excluded).map((li) => li.id);
+    if (eligibleLineItemIds.length === 0) {
+      return { ok: false as const, code: "ALL_ITEMS_EXCLUDED_OR_RETURNED" as const, message: "All items are excluded or already returned." };
+    }
+
+    return {
+      ok: true as const,
+      shop,
+      order: { id: o.id, name: o.name, email: o.email, createdAt: o.createdAt, fulfillmentStatus: o.displayFulfillmentStatus, lineItems },
+      eligibleLineItemIds,
+      deadline: new Date().toISOString(),
+      requestType: requestType as "return" | "exchange" | "complaint",
+      reasons: state.reasons.filter((r) => r.shop === shop && r.active).map((r) => ({
+        id: r.id,
+        labelEn: r.labelEn,
+        labelSv: r.labelSv,
+        appliesTo: r.appliesTo,
+      })),
+    };
+  }
+
+  const ERROR_MESSAGES: Record<string, string> = {
+    ORDER_NOT_FOUND: "We couldn't find that order.",
+    EMAIL_MISMATCH: "Email does not match the order.",
+    SHOP_REQUIRED: "Shop is required.",
+    NOT_FULFILLED: "Order has not been fulfilled yet.",
+    DEADLINE_EXPIRED: "Return deadline has expired.",
+    ALL_ITEMS_EXCLUDED_OR_RETURNED: "All items are excluded or already returned.",
+    INVALID_INPUT: "Please fill in all required fields.",
+    RATE_LIMITED: "Too many attempts. Please try again later.",
+  };
+
+  return {
+    lookupAndValidateOrderBasic: basicValidate,
+    lookupOrderForCustomerBasic: basicValidateCustomer,
+    lookupAndValidateOrder: fullValidate,
+    lookupOrderForCustomer: fullValidateCustomer,
+    revalidateOrderById: revalidateById,
+    checkRateLimit: () => true,
+    listCustomerOrders: async (shop: string, customerId: string) => {
+      const orders = state.orders[shop] ?? [];
+      return orders.filter((o) => o.customerId === customerId && !o.cancelledAt).map((o) => ({
+        id: o.id,
+        name: o.name,
+        createdAt: o.createdAt,
+        fulfillmentStatus: o.displayFulfillmentStatus,
+      }));
+    },
+    portalErrorCodeToMessage: (code: string) => ERROR_MESSAGES[code] || code,
+  };
+});
+
 function orderNode(o: (typeof state.orders)[string][number]) {
   return {
     id: o.id,
@@ -298,58 +454,90 @@ describe("proxy signature and theme rendering", () => {
 });
 
 describe("guest lookup", () => {
-  it("correct order number and email shows the items", async () => {
-    const { html } = await post(SHOP_A, {
+  async function lookupAndSelectType(shop: string, orderNumber: string, email: string, requestType: string) {
+    // Step 1: lookup order (no requestType)
+    const { html: lookupHtml } = await post(shop, {
       _stage: "lookup",
-      requestType: "return",
-      orderNumber: "1001",
-      email: "Alice@Example.com",
+      orderNumber,
+      email,
     });
+    // Step 2: select request type
+    const { html } = await post(shop, {
+      _stage: "select_request_type",
+      requestType,
+      orderNumber,
+      email,
+      selected: "gid://shopify/LineItem/1",
+    });
+    return { lookupHtml, html };
+  }
+
+  it("correct order number and email shows the items", async () => {
+    const { lookupHtml, html } = await lookupAndSelectType(SHOP_A, "1001", "Alice@Example.com", "return");
+    expect(lookupHtml).toContain('name="selected" value="gid://shopify/LineItem/1"');
+    expect(lookupHtml).toContain('aria-label="Select Wool Sweater" checked required');
+    expect(lookupHtml).toContain("request a return or exchange (0 days).");
     expect(html).toContain("Wool Sweater");
     expect(tokenFrom(html)).toBeTruthy();
   });
 
-  it("wrong email gives the generic error and no items", async () => {
+  it("leaves multi-item orders unselected until the customer chooses", async () => {
+    state.orders[SHOP_A][0].lineItems.push({
+      id: "gid://shopify/LineItem/11",
+      title: "Cotton Tee",
+      quantity: 1,
+      variantId: "v11",
+      productId: "p11",
+    });
     const { html } = await post(SHOP_A, {
       _stage: "lookup",
-      requestType: "return",
+      orderNumber: "1001",
+      email: "alice@example.com",
+    });
+    expect(html).toContain('name="selected" value="gid://shopify/LineItem/1"');
+    expect(html).toContain('name="selected" value="gid://shopify/LineItem/11"');
+    const itemCheckboxes = html.match(/<input type="checkbox" name="selected"[^>]*>/g) ?? [];
+    expect(itemCheckboxes).toHaveLength(2);
+    expect(itemCheckboxes.every((input) => !input.includes("checked"))).toBe(true);
+  });
+
+  it("wrong email gives the generic error and no items", async () => {
+    const { html: lookupHtml } = await post(SHOP_A, {
+      _stage: "lookup",
       orderNumber: "1001",
       email: "mallory@example.com",
     });
-    expect(html).toContain("We couldn’t find that order.");
-    expect(html).not.toContain("Email does not match");
-    expect(html).not.toContain("Wool Sweater");
+    expect(lookupHtml).toContain("We couldn\u2019t find that order.");
+    expect(lookupHtml).not.toContain("Email does not match");
+    expect(lookupHtml).not.toContain("Wool Sweater");
   });
 
   it("unknown order number gives the same generic error", async () => {
-    const { html } = await post(SHOP_A, {
+    const { html: lookupHtml } = await post(SHOP_A, {
       _stage: "lookup",
-      requestType: "return",
       orderNumber: "7777",
       email: "alice@example.com",
     });
-    expect(html).toContain("We couldn’t find that order.");
+    expect(lookupHtml).toContain("We couldn\u2019t find that order.");
   });
 
   it("unfulfilled order keeps its specific message", async () => {
-    const { html } = await post(SHOP_A, {
+    const { html: lookupHtml } = await post(SHOP_A, {
       _stage: "lookup",
-      requestType: "return",
       orderNumber: "1003",
       email: "alice@example.com",
     });
-    expect(html).toContain("Order has not been fulfilled yet.");
+    expect(lookupHtml).toContain("Order has not been fulfilled yet.");
   });
 
   it("escapes Liquid/HTML in echoed input", async () => {
-    const { html } = await post(SHOP_A, {
+    const { html: lookupHtml } = await post(SHOP_A, {
       _stage: "lookup",
-      requestType: "return",
       orderNumber: "{{ shop.email }}<b>",
       email: "x@example.com",
     });
-    expect(html).not.toContain("{{ shop.email }}");
-    expect(html).not.toContain("<b>");
+    expect(lookupHtml).not.toContain("{{ shop.email }}");
+    expect(lookupHtml).not.toContain("<b>");
   });
 });
 
@@ -362,38 +550,51 @@ describe("logged-in customer", () => {
     expect(html).not.toContain("gid://shopify/Order/1002");
   });
 
-  it("rejects another customer's order id posted in the form", async () => {
+  async function selectOrderAndType(shop: string, customerId: string, orderId: string, requestType: string) {
+    // Step 1: select order (no requestType)
+    const { html: selectHtml } = await post(
+      shop,
+      { _stage: "select_order", orderId },
+      { customerId },
+    );
+    // Step 2: select request type
     const { html } = await post(
+      shop,
+      { _stage: "select_request_type", requestType, orderId, selected: "gid://shopify/LineItem/1" },
+      { customerId },
+    );
+    return { selectHtml, html };
+  }
+
+  it("rejects another customer's order id posted in the form", async () => {
+    const { html: selectHtml } = await post(
       SHOP_A,
-      { _stage: "select_order", requestType: "return", orderId: "gid://shopify/Order/1002" },
+      { _stage: "select_order", orderId: "gid://shopify/Order/1002" },
       { customerId: "501" },
     );
-    expect(html).toContain("We couldn’t find that order.");
-    expect(html).not.toContain("Linen Shirt");
-    expect(tokenFrom(html)).toBeNull();
+    expect(selectHtml).toContain("We couldn\u2019t find that order.");
+    expect(selectHtml).not.toContain("Linen Shirt");
+    expect(tokenFrom(selectHtml)).toBeNull();
   });
 
   it("selecting their own order shows the items", async () => {
-    const { html } = await post(
-      SHOP_A,
-      { _stage: "select_order", requestType: "return", orderId: "gid://shopify/Order/1001" },
-      { customerId: "501" },
-    );
+    const { html } = await selectOrderAndType(SHOP_A, "501", "gid://shopify/Order/1001", "return");
     expect(html).toContain("Wool Sweater");
     expect(tokenFrom(html)).toBeTruthy();
   });
 
   it("customer with no orders gets the empty state and guest form", async () => {
     const html = await ((await get(SHOP_A, { customerId: "999" })) as Response).text();
-    expect(html).toContain("We couldn’t find any orders on your account.");
+    expect(html).toContain("We couldn\u2019t find any orders on your account.");
     expect(html).toContain('name="orderNumber"');
   });
 });
 
 describe("submit", () => {
   async function guestToken(orderNumber = "1001", requestType = "return", email = "alice@example.com") {
-    const { html } = await post(SHOP_A, { _stage: "lookup", requestType, orderNumber, email });
-    const token = tokenFrom(html);
+    await post(SHOP_A, { _stage: "lookup", orderNumber, email });
+    const { html: typeHtml } = await post(SHOP_A, { _stage: "select_request_type", requestType, orderNumber, email });
+    const token = tokenFrom(typeHtml);
     expect(token).toBeTruthy();
     return token!;
   }
@@ -449,7 +650,7 @@ describe("submit", () => {
       "qty_gid://shopify/LineItem/1": "1",
       "reason_gid://shopify/LineItem/1": "r_size",
     });
-    expect(html).toContain("Choose how you’d like this settled.");
+    expect(html).toContain("Choose how you\u2019d like this settled.");
     expect(state.returnRequests).toHaveLength(0);
   });
 
@@ -519,12 +720,17 @@ describe("submit", () => {
   });
 
   it("a logged-in token cannot be used by a different logged-in customer", async () => {
-    const { html: listHtml } = await post(
+    await post(
       SHOP_A,
-      { _stage: "select_order", requestType: "return", orderId: "gid://shopify/Order/1001" },
+      { _stage: "select_order", orderId: "gid://shopify/Order/1001" },
       { customerId: "501" },
     );
-    const token = tokenFrom(listHtml)!;
+    const { html: typeHtml } = await post(
+      SHOP_A,
+      { _stage: "select_request_type", requestType: "return", orderId: "gid://shopify/Order/1001" },
+      { customerId: "501" },
+    );
+    const token = tokenFrom(typeHtml)!;
     const { html } = await post(
       SHOP_A,
       {
@@ -545,9 +751,14 @@ describe("submit", () => {
 describe("second shop", () => {
   it("uses the signed shop's orders, not a posted shop field", async () => {
     // Same order number #1001 exists on both shops with different emails.
+    await post(
+      SHOP_B,
+      { _stage: "lookup", orderNumber: "1001", email: "carol@example.com" },
+      { postedShop: SHOP_A },
+    );
     const { html } = await post(
       SHOP_B,
-      { _stage: "lookup", requestType: "return", orderNumber: "1001", email: "carol@example.com" },
+      { _stage: "select_request_type", requestType: "return", orderNumber: "1001", email: "carol@example.com", selected: "gid://shopify/LineItem/9" },
       { postedShop: SHOP_A },
     );
     expect(html).toContain("Shop B Jacket");
@@ -555,15 +766,20 @@ describe("second shop", () => {
   });
 
   it("a token from shop A is not accepted on shop B", async () => {
-    const { html: found } = await post(SHOP_A, {
+    await post(SHOP_A, {
       _stage: "lookup",
+      orderNumber: "1001",
+      email: "alice@example.com",
+    });
+    const { html: typeHtml } = await post(SHOP_A, {
+      _stage: "select_request_type",
       requestType: "return",
       orderNumber: "1001",
       email: "alice@example.com",
     });
     const { html } = await post(SHOP_B, {
       _stage: "submit",
-      orderToken: tokenFrom(found)!,
+      orderToken: tokenFrom(typeHtml)!,
       resolution: "refund",
       selected: ["gid://shopify/LineItem/1"],
       "qty_gid://shopify/LineItem/1": "1",

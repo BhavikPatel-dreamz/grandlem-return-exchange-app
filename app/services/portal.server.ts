@@ -22,6 +22,8 @@ export type PortalLineItem = {
   productId: string | null;
   collectionIds: string[];
   excluded: boolean;
+  variantPrice?: string | null;
+  variantImage?: { url: string; altText: string | null } | null;
 };
 
 export type PortalOrderResult = {
@@ -34,6 +36,7 @@ export type PortalOrderResult = {
     createdAt: string;
     fulfillmentStatus: string | null;
     lineItems: PortalLineItem[];
+    market?: string | null;
   };
   eligibleLineItemIds: string[];
   deadline: string;
@@ -73,8 +76,8 @@ const ORDER_QUERY = `#graphql
           name
           email
           createdAt
-          fulfillmentStatus
           displayFulfillmentStatus
+          shippingAddress { countryCodeV2 }
           lineItems(first: 50) {
             edges {
               node {
@@ -83,6 +86,8 @@ const ORDER_QUERY = `#graphql
                 quantity
                 variant {
                   id
+                  price
+                  image { id url altText }
                   product {
                     id
                     collections(first: 20) {
@@ -145,7 +150,7 @@ async function validateOrderNode(
   node: any,
   requestType: "return" | "exchange" | "complaint",
 ): Promise<PortalOrderResult | PortalError> {
-  const fulfillmentStatus = node.displayFulfillmentStatus || node.fulfillmentStatus;
+  const fulfillmentStatus = node.displayFulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
     return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
@@ -163,6 +168,8 @@ async function validateOrderNode(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
       excluded: false,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
     };
   });
 
@@ -220,6 +227,7 @@ async function validateOrderNode(
       createdAt: node.createdAt,
       fulfillmentStatus,
       lineItems,
+      market: node.shippingAddress?.countryCodeV2 ?? null,
     },
     eligibleLineItemIds,
     deadline: deadline.toISOString(),
@@ -253,6 +261,7 @@ const ORDER_BY_ID_QUERY = `#graphql
       email
       createdAt
       displayFulfillmentStatus
+      shippingAddress { countryCodeV2 }
       customer { id }
       lineItems(first: 50) {
         edges {
@@ -262,6 +271,8 @@ const ORDER_BY_ID_QUERY = `#graphql
             quantity
             variant {
               id
+              price
+              image { id url altText }
               product {
                 id
                 collections(first: 20) { edges { node { id } } }
@@ -367,6 +378,160 @@ export async function revalidateOrderById(
   const node = await fetchOrderNodeById(shop, orderId);
   if ("ok" in node) return node;
   return validateOrderNode(shop, node, requestType);
+}
+
+/**
+ * Basic validation: only checks order exists, email matches, and order is fulfilled.
+ * Does NOT check exclusions, deadlines, or reasons (those depend on requestType).
+ * Used for initial order lookup before request type is selected.
+ */
+export async function lookupAndValidateOrderBasic(
+  shop: string,
+  orderNumberInput: string,
+  emailInput: string,
+): Promise<PortalOrderResult | PortalError> {
+  const orderNumber = normalizeOrderNumber(orderNumberInput);
+  const email = emailInput.trim().toLowerCase();
+  if (!shop || !orderNumber || !email) {
+    return { ok: false, code: "INVALID_INPUT", message: "Shop, order number and email are required." };
+  }
+
+  let admin;
+  try {
+    ({ admin } = await unauthenticated.admin(shop));
+  } catch {
+    return { ok: false, code: "SHOP_REQUIRED", message: "This shop is not available." };
+  }
+
+  const q = `name:#${orderNumber}`;
+  const response = await admin.graphql(ORDER_QUERY, { variables: { query: q } });
+  const json = await response.json();
+  const node = json?.data?.orders?.edges?.[0]?.node;
+
+  if (!node) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  if (!node.email || node.email.toLowerCase() !== email) {
+    return { ok: false, code: "EMAIL_MISMATCH", message: "Email does not match the order." };
+  }
+
+  const fulfillmentStatus = node.displayFulfillmentStatus;
+  const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
+  if (!fulfilled) {
+    return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
+    const n = e.node;
+    return {
+      id: n.id,
+      title: n.title,
+      quantity: n.quantity,
+      variantId: n.variant?.id ?? null,
+      productId: n.variant?.product?.id ?? null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
+      excluded: false,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
+    };
+  });
+
+  const allReasons = await listReturnReasons(shop, true);
+
+  return {
+    ok: true,
+    shop,
+    order: {
+      id: node.id,
+      name: node.name,
+      email: node.email,
+      createdAt: node.createdAt,
+      fulfillmentStatus,
+      lineItems,
+      market: node.shippingAddress?.countryCodeV2 ?? null,
+    },
+    eligibleLineItemIds: lineItems.map((li) => li.id),
+    deadline: new Date().toISOString(),
+    requestType: "return",
+    reasons: allReasons.map((r) => ({
+      id: r.id,
+      labelEn: r.labelEn,
+      labelSv: r.labelSv,
+      appliesTo: r.appliesTo,
+    })),
+  };
+}
+
+/**
+ * Basic validation for logged-in customer: checks order exists, belongs to customer, and is fulfilled.
+ * Does NOT check exclusions, deadlines, or reasons (those depend on requestType).
+ */
+export async function lookupOrderForCustomerBasic(
+  shop: string,
+  orderId: string,
+  customerId: string,
+): Promise<PortalOrderResult | PortalError> {
+  const gid = customerGid(customerId);
+  if (!gid) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  const node = await fetchOrderNodeById(shop, orderId);
+  if ("ok" in node) return node;
+  if (node.customer?.id !== gid) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  const fulfillmentStatus = node.displayFulfillmentStatus;
+  const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
+  if (!fulfilled) {
+    return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
+    const n = e.node;
+    return {
+      id: n.id,
+      title: n.title,
+      quantity: n.quantity,
+      variantId: n.variant?.id ?? null,
+      productId: n.variant?.product?.id ?? null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
+      excluded: false,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
+    };
+  });
+
+  const allReasons = await listReturnReasons(shop, true);
+
+  return {
+    ok: true,
+    shop,
+    order: {
+      id: node.id,
+      name: node.name,
+      email: node.email,
+      createdAt: node.createdAt,
+      fulfillmentStatus,
+      lineItems,
+      market: node.shippingAddress?.countryCodeV2 ?? null,
+    },
+    eligibleLineItemIds: lineItems.map((li) => li.id),
+    deadline: new Date().toISOString(),
+    requestType: "return",
+    reasons: allReasons.map((r) => ({
+      id: r.id,
+      labelEn: r.labelEn,
+      labelSv: r.labelSv,
+      appliesTo: r.appliesTo,
+    })),
+  };
 }
 
 export function portalErrorCodeToMessage(code: PortalErrorCode, lang: "en" | "sv" = "en"): string {
