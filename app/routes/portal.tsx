@@ -135,12 +135,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       customerEmail: result.order.email,
       customerName: null,
       type: requestType,
+      autoApprove: settings.autoApproveRequests,
       items,
     });
 
     let labelUrl: string | null = null;
     let trackingUrl: string | null = null;
-    if (getLabelTimingForMarket(settings.labelTimingPerMarket, result.order.market) === "immediate") {
+    if (settings.autoApproveRequests || getLabelTimingForMarket(settings.labelTimingPerMarket, result.order.market) === "immediate") {
       const generated = await createReturnLabel(request.id);
       if (generated.ok) {
         const label = await prisma.returnLabel.findUnique({ where: { returnRequestId: request.id } });
@@ -149,9 +150,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    await sendEventEmail(shop, "received", lang, result.order.email || "", {
+    await sendEventEmail(shop, settings.autoApproveRequests ? "approved" : "received", lang, result.order.email || "", {
       customerName: result.order.email || "customer",
       orderNumber: result.order.name,
+      requestNumber: request.requestNumber,
       items: items.map((it) => it.title).join(", "),
       labelLink: labelUrl || "",
       trackingLink: trackingUrl || "",

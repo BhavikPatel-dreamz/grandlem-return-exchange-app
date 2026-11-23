@@ -8,6 +8,7 @@ export type InspectionInput = {
   condition: "OK" | "DAMAGED" | "WRONG_ITEM" | "MISSING";
   approvedQuantity: number;
   note?: string;
+  restock?: boolean;
 };
 
 export async function saveInspection(
@@ -46,8 +47,8 @@ export async function saveInspection(
       data: { returnedQuantity: Math.max(0, Math.min(insp.approvedQuantity, item.returnedQuantity || item.quantity)) },
     });
 
-    // Restock only approved, undamaged items.
-    if (insp.condition === "OK" && item.reason?.autoRestock) {
+    // Restock only approved, undamaged items (manual decision via inspection checkbox).
+    if (insp.restock === true && insp.condition === "OK") {
       await performRestock(shop, item.id, null, insp.approvedQuantity).catch(() => null);
     }
   }

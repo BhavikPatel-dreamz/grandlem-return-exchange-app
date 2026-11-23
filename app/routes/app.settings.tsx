@@ -5,16 +5,20 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
+import { ReturnReasonsSection } from "../components/admin/ReturnReasonsSection";
+import { ReturnImageCommentSection } from "../components/admin/ReturnImageCommentSection";
 import {
   getOrCreateSettings,
   updateSettings,
   parseJson,
+  getReturnImageCommentConfig,
+  updateReturnImageCommentConfig,
 } from "../services/settings.server";
 import {
   listReturnReasons,
   createReturnReason,
-  deleteReturnReason,
   updateReturnReason,
+  ensureDefaultReturnReasons,
 } from "../services/return-reasons.server";
 import {
   listExclusionRules,
@@ -40,6 +44,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (tab === "emails") return redirect("/app/email-templates");
 
   const settings = await getOrCreateSettings(shop);
+  await ensureDefaultReturnReasons(shop);
   const reasons = await listReturnReasons(shop);
   const exclusions = await listExclusionRules(shop);
   const deadlineExtensions = await listDeadlineExtensions(shop);
@@ -49,6 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       returnDeadlineDays: settings.returnDeadlineDays,
       exchangeDeadlineDays: settings.exchangeDeadlineDays,
       complaintDeadlineDays: settings.complaintDeadlineDays,
+      autoApproveRequests: settings.autoApproveRequests,
       autoRefundOnInspection: settings.autoRefundOnInspection,
       refundShippingCost: settings.refundShippingCost,
       claimRequiresPhoto: settings.claimRequiresPhoto,
@@ -62,6 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     exclusions,
     deadlineExtensions,
     shippypro: await getShippyproConnection(shop),
+    returnImageCommentConfig: getReturnImageCommentConfig(settings),
   };
 };
 
@@ -84,6 +91,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         claimMinCommentLength: Number(formData.get("claimMinCommentLength")),
       });
       return { ok: true, message: "Settings saved" };
+    }
+
+    if (intent === "save_approval_settings") {
+      await updateSettings(shop, {
+        autoApproveRequests: formData.get("autoApproveRequests") === "true",
+      });
+      return { ok: true, message: "Approval settings saved" };
     }
 
     if (intent === "save_routing_settings") {
@@ -122,19 +136,66 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ok: true, message: "Return routing settings saved" };
     }
 
-    if (intent === "create_reason") {
-      await createReturnReason(shop, {
-        labelEn: String(formData.get("labelEn") || ""),
-        labelSv: String(formData.get("labelSv") || ""),
-        appliesTo: String(formData.get("appliesTo") || "return,exchange,complaint"),
-        autoRestock: formData.get("autoRestock") === "on",
-      });
-      return { ok: true, message: "Return reason created" };
+    if (intent === "save_return_reasons") {
+      const allReasons = await listReturnReasons(shop);
+      for (const r of allReasons) {
+        const activeVal = formData.get(`reason_active_${r.id}`);
+        if (activeVal !== null) {
+          await updateReturnReason(shop, r.id, { active: activeVal === "on" });
+        }
+      }
+      return { ok: true, message: "Return reasons updated successfully" };
     }
 
-    if (intent === "delete_reason") {
-      await deleteReturnReason(shop, String(formData.get("id")));
-      return { ok: true, message: "Return reason deleted" };
+    if (intent === "create_custom_reason") {
+      const labelEn = String(formData.get("labelEn") || "").trim();
+      const appliesTo = String(formData.get("appliesTo") || "return,exchange");
+      if (labelEn) {
+        await createReturnReason(shop, {
+          labelEn,
+          appliesTo,
+          active: true,
+          autoRestock: false,
+        });
+        return { ok: true, message: "Custom reason added" };
+      }
+      return { ok: false, message: "Please enter a reason name" };
+    }
+
+    if (intent === "create_sub_reason") {
+      const labelEn = String(formData.get("labelEn") || "").trim();
+      const parentLabel = String(formData.get("parentLabel") || "").trim();
+      const appliesTo = String(formData.get("appliesTo") || "return,exchange");
+      if (labelEn) {
+        await createReturnReason(shop, {
+          labelEn,
+          labelSv: parentLabel ? `parent:${parentLabel}` : "",
+          appliesTo,
+          active: true,
+          autoRestock: false,
+        });
+        return { ok: true, message: `Sub-reason "${labelEn}" added` };
+      }
+      return { ok: false, message: "Please enter a sub-reason name" };
+    }
+
+    if (intent === "update_reason_code") {
+      const reasonId = String(formData.get("reasonId"));
+      const code = String(formData.get("code") || "").trim();
+      await updateReturnReason(shop, reasonId, { labelSv: code });
+      return { ok: true, message: "Reason code updated" };
+    }
+
+    if (intent === "archive_reason") {
+      const reasonId = String(formData.get("reasonId"));
+      await updateReturnReason(shop, reasonId, { active: false });
+      return { ok: true, message: "Reason archived" };
+    }
+
+    if (intent === "unarchive_reason") {
+      const reasonId = String(formData.get("reasonId"));
+      await updateReturnReason(shop, reasonId, { active: true });
+      return { ok: true, message: "Reason restored from archive" };
     }
 
     if (intent === "toggle_reason") {
@@ -181,6 +242,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       const count = Array.isArray(result.data) ? result.data.length : 0;
       return { ok: true, message: `Carriers synced (${count}).` };
+    }
+
+    if (intent === "save_return_image_comment_config") {
+      const enabled = formData.get("enabled") === "true";
+      const imageUploadMode = String(formData.get("imageUploadMode") || "optional") as "optional" | "mandatory" | "disabled";
+      const maxPhotos = Number(formData.get("maxPhotos") || 1);
+      const includeInstructions = formData.get("includeInstructions") === "on";
+      const instructions = String(formData.get("instructions") || "").slice(0, 60);
+      const commentMode = String(formData.get("commentMode") || "optional") as "optional" | "mandatory" | "disabled";
+
+      await updateReturnImageCommentConfig(shop, {
+        enabled,
+        imageUploadMode,
+        maxPhotos,
+        includeInstructions,
+        instructions,
+        commentMode,
+      });
+      return { ok: true, message: "Return image and comment options saved" };
     }
 
     if (intent === "save_shippypro_key") {
@@ -235,6 +315,8 @@ export function SettingsView() {
       </div>
 
       <div style={{ display: activeTab === "general" ? "block" : "none" }}>
+        <ReturnReasonsSection reasons={data.reasons} />
+
         <div className="returbo-card">
           <div className="returbo-card-header">
             <h2 className="returbo-card-title">Deadlines (days)</h2>
@@ -246,13 +328,22 @@ export function SettingsView() {
               <s-number-field name="returnDeadlineDays" label="Return deadline" value={String(data.settings.returnDeadlineDays)} />
               <s-number-field name="exchangeDeadlineDays" label="Exchange deadline" value={String(data.settings.exchangeDeadlineDays)} />
               <s-number-field name="complaintDeadlineDays" label="Complaint deadline" value={String(data.settings.complaintDeadlineDays)} />
-              <s-checkbox name="autoRefundOnInspection" label="Auto refund on inspection" defaultChecked={data.settings.autoRefundOnInspection} />
-              <s-checkbox name="refundShippingCost" label="Include shipping in refunds" defaultChecked={data.settings.refundShippingCost} />
-              <s-checkbox name="claimRequiresPhoto" label="Require photo for complaints" defaultChecked={data.settings.claimRequiresPhoto} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" name="autoRefundOnInspection" defaultChecked={data.settings.autoRefundOnInspection} style={{ accentColor: "var(--returbo-pink)" }} />
+                <span>Auto refund on inspection</span>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" name="refundShippingCost" defaultChecked={data.settings.refundShippingCost} style={{ accentColor: "var(--returbo-pink)" }} />
+                <span>Include shipping in refunds</span>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" name="claimRequiresPhoto" defaultChecked={data.settings.claimRequiresPhoto} style={{ accentColor: "var(--returbo-pink)" }} />
+                <span>Require photo for complaints</span>
+              </label>
               <s-number-field name="claimMinPhotos" label="Minimum photos per complaint item" value={String(data.settings.claimMinPhotos)} />
               <s-number-field name="claimMinCommentLength" label="Minimum comment length for complaints" value={String(data.settings.claimMinCommentLength)} />
               <div>
-                <s-button type="submit" variant="primary">Save deadlines</s-button>
+                <button type="submit" className="returbo-btn-primary">Save deadlines</button>
               </div>
             </s-stack>
           </Form>
@@ -276,7 +367,7 @@ export function SettingsView() {
               <s-text-field name="shippyproApiKey" label="ShippyPro API key" />
               <s-text-field name="shippyproApiUrl" label="ShippyPro API URL (optional)" value={data.shippypro.apiUrl || ""} />
               <div>
-                <s-button type="submit" variant="primary">Save connection</s-button>
+                <button type="submit" className="returbo-btn-primary">Save connection</button>
               </div>
             </s-stack>
           </Form>
@@ -290,7 +381,7 @@ export function SettingsView() {
           <Form method="post">
             <input type="hidden" name="_action" value="sync_carriers" />
             <div>
-              <s-button type="submit">Re-sync carriers</s-button>
+              <button type="submit" className="returbo-btn-primary">Re-sync carriers</button>
             </div>
           </Form>
         </div>
@@ -327,56 +418,54 @@ export function SettingsView() {
                   </fieldset>
                 );
               })}
-              <s-button type="submit" variant="primary">Save return routing</s-button>
+              <div style={{ width: "fit-content" }}>
+                <button type="submit" className="returbo-btn-primary">Save return routing</button>
+              </div>
             </s-stack>
           </Form>
         </div>
       </div>
 
       <div style={{ display: activeTab === "compliance" ? "block" : "none" }}>
-        <div className="returbo-card">
+        <ReturnImageCommentSection config={data.returnImageCommentConfig} />
+
+        <div className="returbo-card" style={{ marginBottom: 24 }}>
           <div className="returbo-card-header">
-            <h2 className="returbo-card-title">Return reasons</h2>
-            <p className="returbo-card-subtitle">Configure reasons customers can select when initiating a return, exchange, or claim.</p>
+            <h2 className="returbo-card-title">Reviewing and pre-approving return requests</h2>
+            <p className="returbo-card-subtitle">
+              Choose whether requests are approved automatically or held for manual review before labels are sent. Automatic approval does not issue refunds; refunds still follow your normal review process.
+            </p>
           </div>
-          <Form method="post" style={{ marginBottom: 20 }}>
-            <input type="hidden" name="_action" value="create_reason" />
-            <s-stack direction="block" gap="base">
-              <s-text-field name="labelEn" label="Label (English)" />
-              <s-text-field name="labelSv" label="Label (Swedish)" />
-              <s-select name="appliesTo" label="Applies to">
-                <s-option value="return,exchange,complaint">All</s-option>
-                <s-option value="return">Return</s-option>
-                <s-option value="exchange">Exchange</s-option>
-                <s-option value="complaint">Complaint</s-option>
-              </s-select>
-              <s-checkbox name="autoRestock" label="Auto restock" />
-              <div>
-                <s-button type="submit" variant="primary">Add reason</s-button>
+          <Form method="post">
+            <input type="hidden" name="_action" value="save_approval_settings" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                <input
+                  type="radio"
+                  id="auto-approve-requests-yes"
+                  aria-labelledby="auto-approve-requests-yes-label"
+                  name="autoApproveRequests"
+                  value="true"
+                  defaultChecked={data.settings.autoApproveRequests}
+                  style={{ accentColor: "var(--returbo-pink)" }}
+                />
+                <span id="auto-approve-requests-yes-label"><strong>Automatically pre-approve all your return requests</strong></span>
               </div>
-            </s-stack>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                <input
+                  type="radio"
+                  id="auto-approve-requests-no"
+                  aria-labelledby="auto-approve-requests-no-label"
+                  name="autoApproveRequests"
+                  value="false"
+                  defaultChecked={!data.settings.autoApproveRequests}
+                  style={{ accentColor: "var(--returbo-pink)" }}
+                />
+                <span id="auto-approve-requests-no-label"><strong>Manually pre-approve all your return requests</strong></span>
+              </div>
+            </div>
+            <button type="submit" className="returbo-btn-primary">Save approval settings</button>
           </Form>
-          <div className="returbo-card-header" style={{ marginTop: 24, marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Active Reasons ({data.reasons.length})</h3>
-          </div>
-          <div>
-            {data.reasons.length === 0 && (
-              <p style={{ color: "var(--returbo-text-muted)", fontSize: 13, margin: "12px 0" }}>No return reasons configured yet.</p>
-            )}
-            {data.reasons.map((r) => (
-              <div key={r.id} className="returbo-list-item">
-                <div>
-                  <strong>{r.labelEn}</strong> {r.labelSv ? `(${r.labelSv})` : ""}{" "}
-                  <span className="returbo-badge returbo-badge-gray" style={{ marginLeft: 6 }}>{r.appliesTo}</span>
-                </div>
-                <Form method="post" style={{ display: "inline" }}>
-                  <input type="hidden" name="_action" value="delete_reason" />
-                  <input type="hidden" name="id" value={r.id} />
-                  <s-button type="submit" variant="tertiary">Delete</s-button>
-                </Form>
-              </div>
-            ))}
-          </div>
         </div>
 
         <div className="returbo-card">
@@ -396,7 +485,7 @@ export function SettingsView() {
               <s-checkbox name="appliesToReturns" label="Applies to returns" defaultChecked />
               <s-checkbox name="appliesToExchanges" label="Applies to exchanges" defaultChecked />
               <div>
-                <s-button type="submit" variant="primary">Add exclusion</s-button>
+                <button type="submit" className="returbo-btn-primary">Add exclusion</button>
               </div>
             </s-stack>
           </Form>
@@ -444,7 +533,7 @@ export function SettingsView() {
               <s-date-field name="newDeadline" label="New deadline" />
               <s-text-field name="note" label="Note" />
               <div>
-                <s-button type="submit" variant="primary">Save extension</s-button>
+                <button type="submit" className="returbo-btn-primary">Save extension</button>
               </div>
             </s-stack>
           </Form>

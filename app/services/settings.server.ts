@@ -4,6 +4,8 @@ export type SettingsInput = {
   returnDeadlineDays?: number;
   exchangeDeadlineDays?: number;
   complaintDeadlineDays?: number;
+  autoApproveRequests?: boolean;
+  emailFrom?: string;
   autoRefundOnInspection?: boolean;
   deflectionEnabled?: boolean;
   storeCreditEnabled?: boolean;
@@ -38,6 +40,8 @@ export async function updateSettings(shop: string, input: SettingsInput) {
   if (input.returnDeadlineDays !== undefined) data.returnDeadlineDays = input.returnDeadlineDays;
   if (input.exchangeDeadlineDays !== undefined) data.exchangeDeadlineDays = input.exchangeDeadlineDays;
   if (input.complaintDeadlineDays !== undefined) data.complaintDeadlineDays = input.complaintDeadlineDays;
+  if (input.autoApproveRequests !== undefined) data.autoApproveRequests = input.autoApproveRequests;
+  if (input.emailFrom !== undefined) data.emailFrom = input.emailFrom;
   if (input.autoRefundOnInspection !== undefined) data.autoRefundOnInspection = input.autoRefundOnInspection;
   if (input.deflectionEnabled !== undefined) data.deflectionEnabled = input.deflectionEnabled;
   if (input.storeCreditEnabled !== undefined) data.storeCreditEnabled = input.storeCreditEnabled;
@@ -75,6 +79,50 @@ export function parseJson<T>(value: string | null | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+export type ReturnImageCommentConfig = {
+  enabled: boolean;
+  imageUploadMode: "optional" | "mandatory" | "disabled";
+  maxPhotos: number;
+  includeInstructions: boolean;
+  instructions: string;
+  commentMode: "optional" | "mandatory" | "disabled";
+};
+
+export function getReturnImageCommentConfig(settings?: { labelTimingPerMarket?: string | null } | null): ReturnImageCommentConfig {
+  const timings = parseJson<Record<string, string>>(settings?.labelTimingPerMarket, {});
+  const raw = timings["__return_image_comment"];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        enabled: Boolean(parsed.enabled),
+        imageUploadMode: parsed.imageUploadMode || "optional",
+        maxPhotos: Number(parsed.maxPhotos) || 1,
+        includeInstructions: Boolean(parsed.includeInstructions),
+        instructions: String(parsed.instructions || ""),
+        commentMode: parsed.commentMode || "optional",
+      };
+    } catch {}
+  }
+  return {
+    enabled: false,
+    imageUploadMode: "optional",
+    maxPhotos: 1,
+    includeInstructions: false,
+    instructions: "",
+    commentMode: "optional",
+  };
+}
+
+export async function updateReturnImageCommentConfig(shop: string, config: ReturnImageCommentConfig) {
+  const current = await getOrCreateSettings(shop);
+  const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
+  timings["__return_image_comment"] = JSON.stringify(config);
+  return updateSettings(shop, {
+    labelTimingPerMarket: timings as Record<string, "immediate" | "after_approval">,
+  });
 }
 
 export function getLabelTimingForMarket(value: string | null | undefined, market: string | null | undefined) {

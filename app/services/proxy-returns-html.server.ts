@@ -96,7 +96,7 @@ export function radioGroup(opts: {
 
 export function errorBox(message: string | null | undefined): string {
   if (!message) return "";
-  return `<div class="glr-error" role="alert">${esc(message)}</div>`;
+  return `<div class="glr-error" role="alert"><span class="glr-error-icon" aria-hidden="true">!</span><span>${esc(message)}</span></div>`;
 }
 
 export function card(inner: string, heading?: string): string {
@@ -169,7 +169,8 @@ const STYLES = `<style>
 .glr-card { border: 1px solid rgba(var(--color-foreground, 0,0,0), .15); border-radius: var(--inputs-radius, 12px); padding: 1.5rem; }
 .glr-card > h2 { margin: 0 0 1rem; }
 .glr-field { margin: 0 0 1rem; }
-.glr-error { border: 1px solid #fca5a5; background: #fef2f2; color: #b91c1c; border-radius: 12px; padding: .75rem 1rem; font-size: 14px; text-align: center; margin-bottom: 1.25rem; line-height: 1.4; }
+.glr-error { display: flex; align-items: flex-start; gap: .6rem; border: 1px solid #fca5a5; background: #fef2f2; color: #b91c1c; border-radius: 12px; padding: .75rem 1rem; font-size: 14px; text-align: left; margin-bottom: 1.25rem; line-height: 1.4; }
+.glr-error-icon { flex: 0 0 auto; font-weight: 700; }
 .glr-notice { border: 1px solid rgba(var(--color-foreground, 0,0,0), .2); border-radius: 8px; padding: .75rem 1rem; }
 .glr-actions { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1rem; }
 .glr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; }
@@ -387,6 +388,21 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-summary-policy-footer { font-size: 13px; color: #64748b; text-align: center; margin-top: 14px; line-height: 1.4; }
 .glr-summary-policy-link { color: #de4066; text-decoration: underline; cursor: pointer; font-weight: 500; }
 .glr-summary-policy-link:hover { color: #b52749; }
+
+/* Confirmation Screen */
+.glr-conf-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 36px 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); text-align: center; box-sizing: border-box; }
+.glr-conf-icon-wrap { display: flex; justify-content: center; align-items: center; margin-bottom: 20px; }
+.glr-conf-title { font-size: 28px; font-weight: 800; color: #0f172a; margin: 0 0 20px 0; letter-spacing: -0.02em; font-family: inherit; text-align: center; }
+.glr-conf-number-strip { background: #feeff4; border: 1px solid #fce7f3; border-radius: 10px; padding: 12px 20px; max-width: 420px; margin: 0 auto 20px auto; display: flex; align-items: center; justify-content: space-between; }
+.glr-conf-number-left { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: #0f172a; }
+.glr-conf-divider { width: 1px; height: 20px; background: #e2e8f0; margin: 0 12px; }
+.glr-conf-number-value { color: #de4066; font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
+.glr-conf-next-text { font-size: 14px; line-height: 1.5; color: #0f172a; max-width: 380px; margin: 0 auto 20px auto; text-align: center; }
+.glr-conf-email-banner { background: #feeff4; border: 1px solid #fce7f3; border-radius: 8px; padding: 12px 18px; max-width: 480px; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; font-weight: 500; color: #0f172a; text-align: center; }
+.glr-conf-email-icon { display: flex; align-items: center; justify-content: center; color: #de4066; flex-shrink: 0; }
+.glr-conf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 380px; height: 48px; background: #e52b5a; color: #ffffff; border-radius: 12px; font-size: 15px; font-weight: 700; text-decoration: none; transition: background 0.15s ease, transform 0.15s ease; box-shadow: 0 4px 12px rgba(229, 43, 90, 0.25); font-family: inherit; margin: 0 auto; }
+.glr-conf-btn:hover { background: #d0204d; color: #ffffff; text-decoration: none; }
+.glr-conf-btn:active { background: #b51a40; transform: scale(0.99); }
 </style>`;
 
 /** Wraps a screen in the page container. Shopify adds the theme header/footer. */

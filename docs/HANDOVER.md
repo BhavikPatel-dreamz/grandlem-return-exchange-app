@@ -9,7 +9,8 @@
 Set these before running/deploying:
 - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`, `SHOPIFY_APP_URL`
 - `SHIPPYPRO_API_KEY` (and optional `SHIPPYPRO_API_URL`)
-- `EMAIL_WEBHOOK_URL` (optional; defaults to console logging)
+- `EMAIL_PROVIDER=resend`, `RESEND_API_KEY` (or `EMAIL_API_KEY`), and `EMAIL_FROM` (verified sender address)
+- `EMAIL_WEBHOOK_URL` (optional fallback when Resend is not configured; otherwise logs to console)
 
 ## Database
 ```bash

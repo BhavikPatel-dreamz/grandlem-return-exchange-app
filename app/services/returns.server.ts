@@ -19,6 +19,7 @@ export type CreateReturnRequestInput = {
   customerEmail?: string | null;
   customerName?: string | null;
   type: "return" | "exchange" | "complaint";
+  autoApprove?: boolean;
   items: CreateReturnItemInput[];
 };
 
@@ -38,7 +39,8 @@ export async function createReturnRequest(input: CreateReturnRequestInput) {
       customerEmail: input.customerEmail ?? null,
       customerName: input.customerName ?? null,
       type: input.type,
-      status: "Submitted",
+      status: input.autoApprove ? "Approved" : "Submitted",
+      approvedAt: input.autoApprove ? new Date() : null,
       items: {
         create: input.items.map((it) => ({
           shopifyLineItemId: it.shopifyLineItemId,
