@@ -39,7 +39,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         where: { id },
         data: { status: "Approved", approvedAt: new Date() },
       });
-      if (!rr.label) await createReturnLabel(id).catch(() => null);
+      if (!rr.label || rr.label.status === "failed" || rr.label.status === "voided") {
+        await createReturnLabel(id).catch(() => null);
+      }
       await autoRestockForRequest(id).catch(() => null);
       const updated = await prisma.returnRequest.findUnique({ where: { id }, include: { label: true } });
       await sendEventEmail(shop, "approved", "en", rr.customerEmail || "", {

@@ -6,9 +6,11 @@ import {
   lookupAndValidateOrder,
   portalErrorCodeToMessage,
 } from "../services/portal.server";
-import { getOrCreateSettings } from "../services/settings.server";
+import { getLabelTimingForMarket, getOrCreateSettings } from "../services/settings.server";
 import { createReturnRequest } from "../services/returns.server";
+import { createReturnLabel } from "../services/shippypro.server";
 import { sendEventEmail } from "../services/email.server";
+import prisma from "../db.server";
 
 const MAX_PHOTO_SIZE = 5 * 1024 * 1024;
 
@@ -129,17 +131,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       shop,
       shopifyOrderId: result.order.id,
       orderNumber: result.order.name,
-      market: null,
+      market: result.order.market ?? null,
       customerEmail: result.order.email,
       customerName: null,
       type: requestType,
       items,
     });
 
+    let labelUrl: string | null = null;
+    let trackingUrl: string | null = null;
+    if (getLabelTimingForMarket(settings.labelTimingPerMarket, result.order.market) === "immediate") {
+      const generated = await createReturnLabel(request.id);
+      if (generated.ok) {
+        const label = await prisma.returnLabel.findUnique({ where: { returnRequestId: request.id } });
+        labelUrl = label?.labelUrl ?? null;
+        trackingUrl = label?.trackingUrl ?? null;
+      }
+    }
+
     await sendEventEmail(shop, "received", lang, result.order.email || "", {
       customerName: result.order.email || "customer",
       orderNumber: result.order.name,
       items: items.map((it) => it.title).join(", "),
+      labelLink: labelUrl || "",
+      trackingLink: trackingUrl || "",
     }).catch(() => null);
 
     return {
@@ -148,6 +163,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       requestId: request.id,
       requestNumber: request.requestNumber,
       orderName: result.order.name,
+      labelUrl,
       lang,
     } as const;
   }
@@ -255,6 +271,7 @@ export default function PortalPage() {
           <s-paragraph>Your return is locked in.</s-paragraph>
           <s-paragraph>Request number: {(actionData as any).requestNumber || (actionData as any).requestId}</s-paragraph>
           <s-paragraph>Order: {(actionData as any).orderName}</s-paragraph>
+          {(actionData as any).labelUrl && <s-link href={(actionData as any).labelUrl} target="_blank">Download return label</s-link>}
           <s-paragraph>What happens next: show the label/QR at a drop-off, pack the item, and we&apos;ll email you when it reaches our warehouse.</s-paragraph>
         </s-section>
       )}

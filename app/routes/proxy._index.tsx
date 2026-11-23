@@ -17,6 +17,8 @@ import {
   listCustomerOrders,
   lookupAndValidateOrder,
   lookupOrderForCustomer,
+  lookupAndValidateOrderBasic,
+  lookupOrderForCustomerBasic,
   portalErrorCodeToMessage,
   revalidateOrderById,
   type CustomerOrderSummary,
@@ -34,9 +36,10 @@ import {
   type Resolution,
   type ResolutionChoices,
 } from "../services/proxy-resolutions.server";
-import { getOrCreateSettings } from "../services/settings.server";
+import { getLabelTimingForMarket, getOrCreateSettings } from "../services/settings.server";
 import { getEffectiveDeadline, isExpired } from "../services/validation.server";
 import { createReturnRequest } from "../services/returns.server";
+import { createReturnLabel } from "../services/shippypro.server";
 import { sendEventEmail } from "../services/email.server";
 import prisma from "../db.server";
 
@@ -57,10 +60,11 @@ const MAX_COMMENT_LENGTH = 2000;
 
 const COPY = {
   en: {
+    eyebrow: "RETURNS & EXCHANGES",
     title: "Returns & exchanges",
     lead: "Start a return, exchange, or complaint for an order.",
-    guestHeading: "Find your order",
-    guestIntro: "Enter the order number and the email used at checkout.",
+    guestHeading: "Let's find your order",
+    guestIntro: "Enter your order number and the email or phone number used at checkout, we'll pull up the rest.",
     loggedIn: "Choose the order you want to return or exchange.",
     yourOrders: "Your orders",
     noOrders: "We couldn’t find any orders on your account. You can still look up an order below.",
@@ -74,22 +78,58 @@ const COPY = {
       ON_HOLD: "On hold",
       SCHEDULED: "Scheduled",
     } as Record<string, string>,
-    requestType: "What would you like to do?",
+    requestType: "What would you like to do with this order?",
     types: { return: "Return", exchange: "Exchange", complaint: "Complaint" },
+    typeDescriptions: {
+      return: "Send items back for a refund.",
+      exchange: "Replace with a different size, color, or item.",
+      complaint: "Report an issue with this order.",
+    },
     orderNumber: "Order number",
-    email: "Email",
-    findOrder: "Find order",
+    email: "Email/Phone number",
+    orderNumberPlaceholder: "# 000001",
+    emailPlaceholder: "example@mail.com",
+     findOrder: "Find my order",
+    returnPolicy: "Return policy",
+    help: "Help?",
+    next: "Next",
+    submitRequest: "Submit request",
+    dragAndDrop: "Choose files or drag and drop",
+    chooseFilesBtn: "Choose files",
+    backToDetails: "Back to details",
+    returnSummaryTitle: "Your return summary",
+    exchangeSummaryTitle: "Your exchange summary",
+    complaintSummaryTitle: "Your complaint summary",
+    itemsReturning: "Items you're returning",
+    itemsExchanging: "Items you're exchanging",
+    itemsReporting: "Items you're reporting",
+    itemsCount: (n: number) => `${n} item(s)`,
+    requestDetailsHeading: "Request details",
+    requestTypeLabel: "Request type",
+    reasonLabel: "Reason",
+    commentLabel: "Comment",
+    uploadedPhotosLabel: "Uploaded photos",
+    estimatedRefund: "Estimated refund",
+    refundDisclaimer: "* The final refund amount is subject to applied deductions, shipping costs and store policy.",
+    confirmReturnRequest: "Confirm return request",
+    confirmExchangeRequest: "Confirm exchange request",
+    confirmComplaintRequest: "Confirm complaint request",
+    agreePolicy: (shop: string) => `By confirming you agree to ${shop}'s `,
     notFound: "We couldn’t find that order.",
     unknownStage: "Something went wrong. Please start again.",
     verifiedHeading: "Order found",
     order: "Order",
     request: "Request",
     deadline: "Deadline",
+    purchaseDate: "Purchase date",
+    deadlineDependsOnType: "Depends on request type",
     items: "Items",
     notEligible: "not eligible",
-    changeType: "Change request type",
-    resolutionLegend: "How would you like this settled?",
-    resolutionFixed: "This request will be settled as:",
+    noEligibleItems: "No eligible items.",
+changeType: "Change request type",
+     resolutionLegend: "How would you like this settled?",
+     resolutionFixed: "This request will be settled as:",
+     edit: "Edit",
     resolutions: {
       refund: "Refund to the original payment method",
       store_credit: "Store credit",
@@ -131,10 +171,11 @@ const COPY = {
     startAnother: "Start another request",
   },
   sv: {
+    eyebrow: "RETURER & BYTEN",
     title: "Returer & byten",
     lead: "Starta en retur, ett byte eller en reklamation för en order.",
-    guestHeading: "Hitta din order",
-    guestIntro: "Ange ordernumret och e-postadressen från köpet.",
+    guestHeading: "Låt oss hitta din order",
+    guestIntro: "Ange ditt ordernummer och e-postadressen eller telefonnumret från köpet, så hämtar vi resten.",
     loggedIn: "Välj ordern du vill returnera eller byta.",
     yourOrders: "Dina ordrar",
     noOrders: "Vi hittade inga ordrar på ditt konto. Du kan fortfarande söka upp en order nedan.",
@@ -148,22 +189,58 @@ const COPY = {
       ON_HOLD: "Pausad",
       SCHEDULED: "Schemalagd",
     } as Record<string, string>,
-    requestType: "Vad vill du göra?",
+    requestType: "Vad vill du göra med denna order?",
     types: { return: "Retur", exchange: "Byte", complaint: "Reklamation" },
+    typeDescriptions: {
+      return: "Skicka tillbaka artiklar för återbetalning.",
+      exchange: "Byt till en annan storlek, färg eller artikel.",
+      complaint: "Rapportera ett problem med denna order.",
+    },
     orderNumber: "Ordernummer",
-    email: "E-post",
-    findOrder: "Hitta order",
+    email: "E-post/Telefonnummer",
+    orderNumberPlaceholder: "# 000001",
+    emailPlaceholder: "example@mail.com",
+    findOrder: "Hitta min order",
+    returnPolicy: "Returpolicy",
+    help: "Hjälp?",
+    next: "Nästa",
+    submitRequest: "Skicka ärende",
+    dragAndDrop: "Välj filer eller dra och släpp",
+    chooseFilesBtn: "Välj filer",
+    backToDetails: "Tillbaka till detaljer",
+    returnSummaryTitle: "Din retursammanfattning",
+    exchangeSummaryTitle: "Din bytessammanfattning",
+    complaintSummaryTitle: "Din reklamationssammanfattning",
+    itemsReturning: "Artiklar du returnerar",
+    itemsExchanging: "Artiklar du byter",
+    itemsReporting: "Artiklar du reklamerar",
+    itemsCount: (n: number) => `${n} artikel/artiklar`,
+    requestDetailsHeading: "Ärendeuppgifter",
+    requestTypeLabel: "Typ av begäran",
+    reasonLabel: "Orsak",
+    commentLabel: "Kommentar",
+    uploadedPhotosLabel: "Uppladdade foton",
+    estimatedRefund: "Beräknad återbetalning",
+    refundDisclaimer: "* Det slutliga återbetalningsbeloppet kan justeras för eventuella avdrag, fraktkostnader och butikens policy.",
+    confirmReturnRequest: "Bekräfta returförfrågan",
+    confirmExchangeRequest: "Bekräfta bytesförfrågan",
+    confirmComplaintRequest: "Bekräfta reklamation",
+    agreePolicy: (shop: string) => `Genom att bekräfta godkänner du ${shop}s `,
     notFound: "Vi kunde inte hitta den ordern.",
     unknownStage: "Något gick fel. Börja om.",
     verifiedHeading: "Order hittad",
     order: "Order",
     request: "Ärende",
     deadline: "Sista dag",
+    purchaseDate: "Köpsdatum",
+    deadlineDependsOnType: "Beror på ärendetyp",
     items: "Artiklar",
     notEligible: "kan inte väljas",
-    changeType: "Byt ärendetyp",
-    resolutionLegend: "Hur vill du att ärendet ska lösas?",
-    resolutionFixed: "Ärendet kommer att lösas med:",
+    noEligibleItems: "Inga kvalificerade artiklar.",
+changeType: "Byt ärendetyp",
+     resolutionLegend: "Hur vill du att ärendet ska lösas?",
+     resolutionFixed: "Ärendet kommer att lösas med:",
+     edit: "Redigera",
     resolutions: {
       refund: "Återbetalning till ursprungligt betalsätt",
       store_credit: "Tillgodohavande",
@@ -219,15 +296,56 @@ function clientIp(request: Request): string {
 
 type LookupValues = { requestType?: ProxyRequestType; orderNumber?: string; email?: string };
 
-function guestLookupCard(ctx: ProxyContext, values: LookupValues = {}): string {
+function guestLookupCard(ctx: ProxyContext, values: LookupValues = {}, error?: string): string {
   const t = COPY[ctx.lang];
+  const isFilled = Boolean(values.orderNumber?.trim() && values.email?.trim());
   const inner =
-    `<p>${esc(t.guestIntro)}</p>` +
-    requestTypeRadios(ctx, values.requestType) +
-    field({ name: "orderNumber", label: t.orderNumber, value: values.orderNumber, required: true }) +
-    field({ name: "email", label: t.email, type: "email", value: values.email, required: true, autocomplete: "email" }) +
-    `<div class="glr-actions"><button type="submit" class="button button--primary">${esc(t.findOrder)}</button></div>`;
-  return card(form(ctx, "lookup", inner), t.guestHeading);
+    errorBox(error) +
+    `<div class="glr-field-wrap">
+  <label class="glr-field-label" for="glr-orderNumber">${esc(t.orderNumber)}</label>
+  <input class="glr-field-input" id="glr-orderNumber" name="orderNumber" type="text"
+    value="${esc(values.orderNumber ?? "")}" placeholder="${esc(t.orderNumberPlaceholder)}" required>
+</div>
+<div class="glr-field-wrap">
+  <label class="glr-field-label" for="glr-email">${esc(t.email)}</label>
+  <input class="glr-field-input" id="glr-email" name="email" type="text"
+    value="${esc(values.email ?? "")}" placeholder="${esc(t.emailPlaceholder)}" required autocomplete="email">
+</div>
+<div class="glr-button-wrap">
+  <button type="submit" class="glr-submit-button ${isFilled ? "glr-btn-active" : ""}">${esc(t.findOrder)}</button>
+</div>
+<script>
+(function() {
+  function initBtnSync() {
+    var form = document.querySelector('.glr-order-card form');
+    if (!form) return;
+    var orderInput = form.querySelector('#glr-orderNumber');
+    var emailInput = form.querySelector('#glr-email');
+    var btn = form.querySelector('.glr-submit-button');
+    if (!orderInput || !emailInput || !btn) return;
+    function updateBtn() {
+      var oVal = (orderInput.value || '').trim();
+      var eVal = (emailInput.value || '').trim();
+      if (oVal.length > 0 && eVal.length > 0) {
+        btn.classList.add('glr-btn-active');
+      } else {
+        btn.classList.remove('glr-btn-active');
+      }
+    }
+    ['input', 'change', 'keyup', 'paste'].forEach(function(evt) {
+      orderInput.addEventListener(evt, updateBtn);
+      emailInput.addEventListener(evt, updateBtn);
+    });
+    updateBtn();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initBtnSync);
+  } else {
+    initBtnSync();
+  }
+})();
+</script>`;
+  return `<div class="glr-order-card">${form(ctx, "lookup", inner)}</div>`;
 }
 
 function requestTypeRadios(ctx: ProxyContext, selected?: ProxyRequestType): string {
@@ -249,7 +367,6 @@ function statusLabel(ctx: ProxyContext, status: string | null): string {
 function customerOrdersCard(
   ctx: ProxyContext,
   orders: CustomerOrderSummary[],
-  selectedType?: ProxyRequestType,
 ): string {
   const t = COPY[ctx.lang];
   const rows = orders
@@ -261,7 +378,7 @@ function customerOrdersCard(
 </button></li>`,
     )
     .join("");
-  const inner = `<p>${esc(t.loggedIn)}</p>${requestTypeRadios(ctx, selectedType)}<ul class="glr-list">${rows}</ul>`;
+  const inner = `<p>${esc(t.loggedIn)}</p><ul class="glr-list">${rows}</ul>`;
   return card(form(ctx, "select_order", inner), t.yourOrders);
 }
 
@@ -283,18 +400,38 @@ async function startScreen(
     if (orders && orders.length > 0) {
       // Guest form stays available for orders placed without the account.
       body =
-        customerOrdersCard(ctx, orders, opts.values?.requestType) +
-        `<details class="glr-card"><summary>${esc(t.otherOrder)}</summary>${guestLookupCard(ctx, opts.values)}</details>`;
+        (opts.error ? errorBox(opts.error) : "") +
+        customerOrdersCard(ctx, orders) +
+        `<details class="glr-order-card glr-details-card" style="margin-top:1.5rem;"><summary style="cursor:pointer;font-weight:600;padding:0.5rem 0;">${esc(t.otherOrder)}</summary><div style="margin-top:1.5rem;">${guestLookupCard(ctx, opts.values, opts.error)}</div></details>`;
+      return page({
+        eyebrow: t.eyebrow,
+        title: t.yourOrders,
+        lead: t.loggedIn,
+        body,
+        showTopbar: true,
+        showFooter: true,
+        lang: ctx.lang,
+        isOrderPage: true,
+      });
     } else {
       body =
-        `<p class="glr-notice">${esc(orders ? t.noOrders : t.ordersUnavailable)}</p>` +
-        guestLookupCard(ctx, opts.values);
+        `<p class="glr-notice" style="max-width:450px;margin:0 auto 1.5rem;">${esc(orders ? t.noOrders : t.ordersUnavailable)}</p>` +
+        guestLookupCard(ctx, opts.values, opts.error);
     }
   } else {
-    body = guestLookupCard(ctx, opts.values);
+    body = guestLookupCard(ctx, opts.values, opts.error);
   }
 
-  return page({ title: t.title, lead: t.lead, body: errorBox(opts.error) + body });
+  return page({
+    eyebrow: t.eyebrow,
+    title: t.guestHeading,
+    lead: t.guestIntro,
+    body,
+    showTopbar: true,
+    showFooter: true,
+    lang: ctx.lang,
+    isOrderPage: true,
+  });
 }
 
 function formatDate(iso: string, lang: ProxyLang): string {
@@ -322,12 +459,15 @@ type DetailsModel = {
 };
 
 /** Previously posted values, used to refill the form after a validation error. */
+type PhotoAttachment = { url: string; fileName?: string; mimeType?: string; size?: number };
+
 type DetailsValues = {
   resolution?: string;
   selected: Set<string>;
   qty: Record<string, string>;
   reason: Record<string, string>;
   comment: Record<string, string>;
+  photos: Record<string, PhotoAttachment[]>;
 };
 
 function reasonApplies(appliesTo: string, requestType: ProxyRequestType): boolean {
@@ -354,25 +494,67 @@ async function loadDetailsModel(ctx: ProxyContext, result: PortalOrderResult): P
   }
 
   const choices = resolutionChoices(settings, result.requestType, exchangeOpen);
-  const reasons = result.reasons
+  const reasons = (result.reasons || [])
     .filter((r) => reasonApplies(r.appliesTo, result.requestType))
     .map((r) => ({ id: r.id, label: ctx.lang === "sv" && r.labelSv ? r.labelSv : r.labelEn }));
   return { settings, choices, reasons };
 }
 
-function readDetailsValues(formData: FormData): DetailsValues {
+async function readDetailsValues(formData: FormData): Promise<DetailsValues> {
   const values: DetailsValues = {
     resolution: String(formData.get("resolution") || "") || undefined,
     selected: new Set(formData.getAll("selected").map(String)),
     qty: {},
     reason: {},
     comment: {},
+    photos: {},
   };
   for (const [key, val] of formData.entries()) {
     if (typeof val !== "string") continue;
     if (key.startsWith("qty_")) values.qty[key.slice(4)] = val;
     else if (key.startsWith("reason_")) values.reason[key.slice(7)] = val;
     else if (key.startsWith("comment_")) values.comment[key.slice(8)] = val;
+  }
+
+  const sharedPhotos: PhotoAttachment[] = [];
+  for (const entry of formData.getAll("photo")) {
+    if (!entry || typeof entry === "string") continue;
+    const file = entry as File;
+    if (file.size <= 0 || !file.type.startsWith("image/") || file.size > MAX_PHOTO_SIZE) continue;
+    sharedPhotos.push({
+      url: await fileToDataUrl(file),
+      fileName: file.name,
+      mimeType: file.type,
+      size: file.size,
+    });
+  }
+  for (const id of values.selected) {
+    values.photos[id] = sharedPhotos;
+  }
+
+  for (const [key, val] of formData.entries()) {
+    if (!key.startsWith("photo_") || typeof val !== "string") continue;
+    try {
+      values.photos[key.slice(6)] = JSON.parse(val) as PhotoAttachment[];
+    } catch {}
+  }
+
+  for (const id of values.selected) {
+    const itemPhotos: PhotoAttachment[] = values.photos[id] ? [...values.photos[id]] : [];
+    for (const entry of formData.getAll(`photo_${id}`)) {
+      if (!entry || typeof entry === "string") continue;
+      const file = entry as File;
+      if (file.size <= 0 || !file.type.startsWith("image/") || file.size > MAX_PHOTO_SIZE) continue;
+      itemPhotos.push({
+        url: await fileToDataUrl(file),
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+      });
+    }
+    if (itemPhotos.length > 0) {
+      values.photos[id] = itemPhotos;
+    }
   }
   return values;
 }
@@ -407,61 +589,14 @@ function resolutionSection(ctx: ProxyContext, model: DetailsModel, selected?: st
   );
 }
 
-function itemBlock(
-  ctx: ProxyContext,
-  model: DetailsModel,
-  requestType: ProxyRequestType,
-  li: PortalOrderResult["order"]["lineItems"][number],
-  index: number,
-  values: DetailsValues | null,
-): string {
-  const t = COPY[ctx.lang];
-  if (li.excluded) {
-    return `<li class="glr-item glr-item--disabled"><label class="glr-choice"><input type="checkbox" disabled> <span>${esc(
-      li.title,
-    )} × ${esc(li.quantity)} <span class="glr-muted">(${esc(t.notEligible)})</span></span></label></li>`;
-  }
-
-  const id = li.id;
-  const domId = `glr-item-${index}`;
-  const checked = values ? values.selected.has(id) : false;
-  const qtyVal = values?.qty[id] ?? "1";
-  const qtyOptions = Array.from({ length: li.quantity }, (_, i) => String(i + 1))
-    .map((q) => `<option value="${q}"${q === qtyVal ? " selected" : ""}>${q}</option>`)
-    .join("");
-
-  const reasonVal = values?.reason[id] ?? "";
-  const reasonSelect = model.reasons.length
-    ? `<div class="glr-row"><label for="${domId}-reason">${esc(t.reason)}</label>
-<select id="${domId}-reason" name="reason_${esc(id)}" class="select__select">
-  <option value="">${esc(t.chooseReason)}</option>
-  ${model.reasons
-    .map((r) => `<option value="${esc(r.id)}"${r.id === reasonVal ? " selected" : ""}>${esc(r.label)}</option>`)
-    .join("")}
-</select></div>`
-    : "";
-
-  const isComplaint = requestType === "complaint";
-  const minComment = isComplaint ? model.settings.claimMinCommentLength : 0;
-  const minPhotos = isComplaint && model.settings.claimRequiresPhoto ? model.settings.claimMinPhotos : 0;
-
-  return `<li class="glr-item">
-  <label class="glr-choice"><input type="checkbox" name="selected" value="${esc(id)}"${checked ? " checked" : ""}>
-    <span><strong>${esc(li.title)}</strong> <span class="glr-muted">× ${esc(li.quantity)}</span></span></label>
-  <div class="glr-item__fields">
-    <div class="glr-row"><label for="${domId}-qty">${esc(t.quantity)}</label>
-      <select id="${domId}-qty" name="qty_${esc(id)}" class="select__select">${qtyOptions}</select></div>
-    ${reasonSelect}
-    <div class="glr-row"><label for="${domId}-comment">${esc(t.comment)}</label>
-      <textarea id="${domId}-comment" name="comment_${esc(id)}" rows="3" maxlength="${MAX_COMMENT_LENGTH}" class="field__input glr-textarea">${esc(
-        values?.comment[id] ?? "",
-      )}</textarea>
-      ${minComment > 0 ? `<p class="glr-muted">${esc(t.commentMin(minComment))}</p>` : ""}</div>
-    <div class="glr-row"><label for="${domId}-photos">${esc(t.photos)}</label>
-      <input id="${domId}-photos" type="file" name="photo_${esc(id)}" accept="image/*" multiple>
-      <p class="glr-muted">${esc(t.photosHint)}${minPhotos > 0 ? ` ${esc(t.photosMin(minPhotos))}` : ""}</p></div>
-  </div>
-</li>`;
+function formatShopDisplayName(shop: string): string {
+  const base = shop.replace(/\.myshopify\.com$/, "");
+  return (
+    base
+      .split(/[-_.]/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ") || shop
+  );
 }
 
 function detailsScreen(
@@ -475,43 +610,322 @@ function detailsScreen(
   const t = COPY[ctx.lang];
   const values = opts.values ?? null;
 
-  const summary = `<dl class="glr-meta">
-  <dt>${esc(t.order)}</dt><dd>${esc(result.order.name)}</dd>
-  <dt>${esc(t.request)}</dt><dd>${esc(t.types[result.requestType])}</dd>
-  <dt>${esc(t.deadline)}</dt><dd>${esc(formatDate(result.deadline, ctx.lang))}</dd>
-</dl>`;
+  // 1. Identify selected line items
+  const selectedIds = new Set<string>();
+  if (values) {
+    for (const id of values.selected) selectedIds.add(id);
+  } else {
+    for (const li of result.order.lineItems) {
+      if (!li.excluded) selectedIds.add(li.id);
+    }
+  }
 
-  const items = result.order.lineItems
-    .map((li, i) => itemBlock(ctx, model, result.requestType, li, i, values))
+  // 2. Titles based on requestType
+  let pageTitle: string = t.returnSummaryTitle;
+  let itemsCardTitle: string = t.itemsReturning;
+  let confirmBtnText: string = t.confirmReturnRequest;
+  let badgeText = t.types.return.toUpperCase();
+  if (result.requestType === "exchange") {
+    pageTitle = t.exchangeSummaryTitle;
+    itemsCardTitle = t.itemsExchanging;
+    confirmBtnText = t.confirmExchangeRequest;
+    badgeText = t.types.exchange.toUpperCase();
+  } else if (result.requestType === "complaint") {
+    pageTitle = t.complaintSummaryTitle;
+    itemsCardTitle = t.itemsReporting;
+    confirmBtnText = t.confirmComplaintRequest;
+    badgeText = t.types.complaint.toUpperCase();
+  }
+
+  // 3. Line items in Card 1 & Price calculation
+  let totalEstimated = 0;
+  let hasValidPrice = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let orderCurrency = (result.order as any).currencyCode || "";
+
+  const itemsHtml = result.order.lineItems
+    .filter((li) => selectedIds.has(li.id))
+    .map((li) => {
+      const qty = values?.qty[li.id] || String(li.quantity);
+      const numPrice = li.variantPrice ? parseFloat(li.variantPrice.replace(/[^0-9.]/g, "")) : NaN;
+      if (!isNaN(numPrice)) {
+        totalEstimated += numPrice * (parseInt(qty, 10) || 1);
+        hasValidPrice = true;
+      }
+      if (!orderCurrency && li.variantPrice) {
+        const m = li.variantPrice.match(/[A-Z]{3}/);
+        if (m) orderCurrency = m[0];
+      }
+
+      const img = li.variantImage
+        ? `<img src="${esc(li.variantImage.url)}" alt="${esc(li.variantImage.altText ?? li.title)}" class="glr-summary-item-img">`
+        : `<div class="glr-summary-item-img glr-product-img--placeholder">📦</div>`;
+
+      const reasonVal = values?.reason[li.id] || "";
+      const reasonObj = model.reasons.find((r) => r.id === reasonVal);
+      const reasonLabel = reasonObj ? reasonObj.label : "";
+
+      const priceFormatted = li.variantPrice
+        ? li.variantPrice.includes(" ") || li.variantPrice.startsWith("$")
+          ? li.variantPrice
+          : `${li.variantPrice}${orderCurrency ? ` ${orderCurrency}` : ""}`
+        : "";
+
+      return `
+        <div class="glr-summary-item">
+          <div class="glr-summary-item-img-wrap">${img}</div>
+          <div class="glr-summary-item-info">
+            <div class="glr-summary-item-title-row">
+              <strong class="glr-summary-item-title">${esc(li.title)}</strong>
+              <span class="glr-type-badge">${esc(badgeText)}</span>
+            </div>
+            ${reasonLabel ? `<div class="glr-summary-item-meta">${esc(reasonLabel)}</div>` : ""}
+            <div class="glr-summary-item-qty">Qty: ${esc(qty)}</div>
+          </div>
+          ${priceFormatted ? `<div class="glr-summary-item-price">${esc(priceFormatted)}</div>` : ""}
+        </div>
+      `;
+    })
     .join("");
 
-  // The signed token is the only order reference posted back. orderNumber /
-  // email are carried only to refill the lookup form on "Change request type".
-  const details = form(
-    ctx,
-    "submit",
-    `<input type="hidden" name="orderToken" value="${esc(token)}">
-<input type="hidden" name="orderNumber" value="${esc(back.orderNumber)}">
-<input type="hidden" name="email" value="${esc(back.email)}">
-${resolutionSection(ctx, model, values?.resolution)}
-<div class="glr-section"><h3 class="h5">${esc(t.chooseItems)}</h3><ul class="glr-list">${items}</ul></div>
-<div class="glr-actions"><button type="submit" class="button button--primary">${esc(t.submit)}</button></div>`,
-    { multipart: true },
-  );
+  if (!orderCurrency) orderCurrency = "INR";
+  const displayTotal = hasValidPrice
+    ? `${totalEstimated.toFixed(2)} ${orderCurrency}`
+    : result.order.lineItems[0]?.variantPrice
+      ? `${result.order.lineItems[0].variantPrice}${orderCurrency ? ` ${orderCurrency}` : ""}`
+      : `0.00 ${orderCurrency}`;
 
-  // Changing the request type means running lookup again (doc, Step 3).
-  const change = form(
-    ctx,
-    "restart",
-    `<input type="hidden" name="orderNumber" value="${esc(back.orderNumber)}">
-<input type="hidden" name="email" value="${esc(back.email)}">
-<input type="hidden" name="requestType" value="${esc(back.requestType)}">
-<button type="submit" class="link glr-link">${esc(t.changeType)}</button>`,
-  );
+  // 4. Request details rows for Card 2
+  const primaryReasonId = Object.values(values?.reason ?? {})[0] || (model.reasons[0]?.id ?? "");
+  const primaryReasonObj = model.reasons.find((r) => r.id === primaryReasonId);
+  const primaryReasonLabel = primaryReasonObj ? primaryReasonObj.label : "";
+
+  const primaryComment = Object.values(values?.comment ?? {}).find((c) => Boolean(c)) || "";
+
+  const allPhotos = Array.from(new Set(Object.values(values?.photos ?? {}).flat().map((p) => p.url)))
+    .map((u) => Object.values(values?.photos ?? {}).flat().find((p) => p.url === u))
+    .filter(Boolean);
+
+  const photosHtml =
+    allPhotos.length > 0
+      ? `<div class="glr-summary-photos">${allPhotos
+          .map((p) => `<img src="${esc(p!.url)}" alt="${esc(p!.fileName || "Uploaded photo")}" class="glr-summary-photo-thumb">`)
+          .join("")}</div>`
+      : "";
+
+  // 5. Hidden fields for submission
+  const selectedInputs = Array.from(selectedIds)
+    .map((id) => `<input type="hidden" name="selected" value="${esc(id)}">`)
+    .join("\n");
+
+  const qtyInputs = Array.from(selectedIds)
+    .map((id) => {
+      const li = result.order.lineItems.find((x) => x.id === id);
+      const qty = values?.qty[id] || (li ? String(li.quantity) : "1");
+      return `<input type="hidden" name="qty_${esc(id)}" value="${esc(qty)}">`;
+    })
+    .join("\n");
+
+  const reasonInputs = Array.from(selectedIds)
+    .map((id) => {
+      const rId = values?.reason[id] || primaryReasonId;
+      return `<input type="hidden" name="reason_${esc(id)}" value="${esc(rId)}">`;
+    })
+    .join("\n");
+
+  const commentInputs = Array.from(selectedIds)
+    .map((id) => {
+      const c = values?.comment[id] || primaryComment;
+      return `<input type="hidden" name="comment_${esc(id)}" value="${esc(c)}">`;
+    })
+    .join("\n");
+
+  const photoInputs = Array.from(selectedIds)
+    .map((id) => {
+      const p = values?.photos[id] || allPhotos;
+      return `<input type="hidden" name="photo_${esc(id)}" value="${esc(JSON.stringify(p))}">`;
+    })
+    .join("\n");
+
+  // 6. Resolution input (hidden if fixed or single option, interactive if multiple options)
+  let resolutionHtml = "";
+  if (model.choices.fixed) {
+    resolutionHtml = `<input type="hidden" name="resolution" value="${esc(model.choices.fixed)}">`;
+  } else if (model.choices.options.length > 1) {
+    resolutionHtml = `
+      <div class="glr-summary-card" style="margin-top:20px;">
+        <h2 class="glr-summary-card-title">${esc(t.resolutionLegend)}</h2>
+        <div style="margin-top:12px;">
+          ${radioGroup({
+            name: "resolution",
+            legend: "",
+            options: model.choices.options.map((r) => ({ value: r, label: resolutionLabel(ctx, r, model.choices) })),
+            selected: values?.resolution ?? model.choices.options[0],
+          })}
+        </div>
+        ${model.choices.refundDeflected ? `<p class="glr-muted" style="margin-top:8px;font-size:13px;">${esc(t.refundDeflected)}</p>` : ""}
+      </div>
+    `;
+  } else if (model.choices.options.length === 1) {
+    resolutionHtml = `<input type="hidden" name="resolution" value="${esc(values?.resolution || model.choices.options[0])}">`;
+  }
+
+  // 7. Navigation back form
+  const changeFields = ctx.loggedInCustomerId
+    ? `<input type="hidden" name="orderId" value="${esc(result.order.id)}">`
+    : `<input type="hidden" name="orderNumber" value="${esc(back.orderNumber)}">
+<input type="hidden" name="email" value="${esc(back.email)}">`;
+
+  const backForm = `
+    <form id="glr-back-form" method="post" action="?" style="display:none;">
+      <input type="hidden" name="_stage" value="select_request_type">
+      ${changeFields}
+      <input type="hidden" name="requestType" value="${esc(result.requestType)}">
+    </form>
+  `;
+
+  // 8. Submit form markup
+  const shopDisplayName = formatShopDisplayName(ctx.shop);
+
+  const submitFormInner = `
+    <input type="hidden" name="orderToken" value="${esc(token)}">
+    <input type="hidden" name="orderNumber" value="${esc(back.orderNumber)}">
+    <input type="hidden" name="email" value="${esc(back.email)}">
+    ${selectedInputs}
+    ${qtyInputs}
+    ${reasonInputs}
+    ${commentInputs}
+    ${photoInputs}
+    ${resolutionHtml}
+
+    <div class="glr-refund-banner">
+      <div class="glr-refund-banner-left">
+        <div class="glr-refund-banner-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#de4066" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="5" width="20" height="14" rx="3"/>
+            <line x1="2" y1="10" x2="22" y2="10"/>
+          </svg>
+        </div>
+        <span>${esc(t.estimatedRefund)}</span>
+      </div>
+      <div class="glr-refund-banner-amount">${esc(displayTotal)}</div>
+    </div>
+    <div class="glr-refund-disclaimer">${esc(t.refundDisclaimer)}</div>
+
+    <button type="submit" class="glr-confirm-btn">${esc(confirmBtnText)}</button>
+
+    <div class="glr-summary-policy-footer">
+      ${esc(t.agreePolicy(shopDisplayName))}<a href="?policy=return" class="glr-summary-policy-link">${esc(t.returnPolicy).toLowerCase()}.</a>
+    </div>
+  `;
+
+  const submitForm = form(ctx, "submit", submitFormInner, { multipart: true });
+
+  const body = `
+    ${errorBox(opts.error)}
+    ${backForm}
+
+    <div>
+      <button type="button" class="glr-back-btn" onclick="if (window.history.length > 1) { window.history.back(); } else { document.getElementById('glr-back-form').submit(); }">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+        <span>${esc(t.backToDetails)}</span>
+      </button>
+
+      <h1 class="glr-summary-title">${esc(pageTitle)}</h1>
+      <div class="glr-summary-order">
+        <span>${esc(t.order)}</span>
+        <span class="glr-order-pill">${esc(result.order.name)}</span>
+      </div>
+    </div>
+
+    <div class="glr-summary-card">
+      <div class="glr-summary-card-header">
+        <div>
+          <h2 class="glr-summary-card-title">${esc(itemsCardTitle)}</h2>
+          <div class="glr-summary-card-count">${esc(t.itemsCount(selectedIds.size))}</div>
+        </div>
+        <button type="button" class="glr-summary-edit-btn" onclick="if (window.history.length > 1) { window.history.back(); } else { document.getElementById('glr-back-form').submit(); }">
+          ${esc(t.edit)}
+        </button>
+      </div>
+      <div class="glr-summary-items-list">
+        ${itemsHtml}
+      </div>
+    </div>
+
+    <div class="glr-summary-card">
+      <h2 class="glr-summary-card-title" style="margin-bottom:16px;">${esc(t.requestDetailsHeading)}</h2>
+      <div class="glr-details-list">
+        <div class="glr-details-row">
+          <div class="glr-details-label-col">
+            <span class="glr-details-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 10h14l-4-4"/>
+                <path d="M17 14H3l4 4"/>
+              </svg>
+            </span>
+            <span>${esc(t.requestTypeLabel)}</span>
+          </div>
+          <div class="glr-details-value-col">${esc(t.types[result.requestType])}</div>
+        </div>
+
+        <div class="glr-details-row">
+          <div class="glr-details-label-col">
+            <span class="glr-details-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+            </span>
+            <span>${esc(t.reasonLabel)}</span>
+          </div>
+          <div class="glr-details-value-col">${esc(primaryReasonLabel || "—")}</div>
+        </div>
+
+        <div class="glr-details-row">
+          <div class="glr-details-label-col">
+            <span class="glr-details-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </span>
+            <span>${esc(t.commentLabel)}</span>
+          </div>
+          <div class="glr-details-value-col">${esc(primaryComment || "—")}</div>
+        </div>
+
+        ${
+          photosHtml
+            ? `
+          <div class="glr-details-row">
+            <div class="glr-details-label-col">
+              <span class="glr-details-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+              </span>
+              <span>${esc(t.uploadedPhotosLabel)}</span>
+            </div>
+            <div class="glr-details-value-col">${photosHtml}</div>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    </div>
+
+    ${submitForm}
+  `;
 
   return page({
-    title: t.title,
-    body: errorBox(opts.error) + card(summary + details, t.verifiedHeading) + change,
+    title: pageTitle,
+    body,
+    isSummaryPage: true,
+    lang: ctx.lang,
   });
 }
 
@@ -520,9 +934,17 @@ async function verifiedScreen(
   result: PortalOrderResult,
   token: string,
   back: LookupValues,
+  formData?: FormData,
 ): Promise<string> {
   const model = await loadDetailsModel(ctx, result);
-  return detailsScreen(ctx, result, model, token, back);
+  const values = formData ? await readDetailsValues(formData) : undefined;
+  if (values && formData) {
+    const sharedComment = String(formData.get("comment") || "").trim();
+    if (sharedComment) {
+      for (const id of values.selected) values.comment[id] = sharedComment;
+    }
+  }
+  return detailsScreen(ctx, result, model, token, back, { values });
 }
 
 function confirmationScreen(
@@ -530,6 +952,7 @@ function confirmationScreen(
   requestNumber: string,
   requestType: ProxyRequestType,
   requireItemReturn: boolean,
+  labelUrl?: string | null,
 ): string {
   const t = COPY[ctx.lang];
   const next =
@@ -543,6 +966,7 @@ function confirmationScreen(
   const body = card(
     `<dl class="glr-meta"><dt>${esc(t.requestNumber)}</dt><dd><strong>${esc(requestNumber)}</strong></dd></dl>
 <p>${esc(next)}</p>
+${labelUrl ? `<p><a href="${esc(labelUrl)}" target="_blank" rel="noreferrer">Download return label</a></p>` : ""}
 <p class="glr-muted">${esc(t.confirmedEmail)}</p>
 <div class="glr-actions"><a class="button button--secondary" href="?">${esc(t.startAnother)}</a></div>`,
     t.confirmedHeading,
@@ -557,10 +981,9 @@ function confirmationScreen(
 async function handleGuestLookup(request: Request, ctx: ProxyContext, formData: FormData) {
   const orderNumber = String(formData.get("orderNumber") || "").trim();
   const email = String(formData.get("email") || "").trim();
-  const requestType = parseRequestType(formData.get("requestType"));
-  const values: LookupValues = { orderNumber, email, requestType: requestType ?? undefined };
+  const values: LookupValues = { orderNumber, email };
 
-  if (!orderNumber || !email || !requestType) {
+  if (!orderNumber || !email) {
     return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values });
   }
 
@@ -574,19 +997,14 @@ async function handleGuestLookup(request: Request, ctx: ProxyContext, formData: 
     return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values });
   }
 
-  const result = await lookupAndValidateOrder(ctx.shop, orderNumber, email, requestType);
-  if (!result.ok) {
-    return await startScreen(ctx, { error: lookupErrorMessage(ctx, result.code), values });
+  // Basic validation: check order exists, email matches, order is fulfilled
+  // (exclusions and deadline will be checked after request type is selected)
+  const basicResult = await lookupAndValidateOrderBasic(ctx.shop, orderNumber, email);
+  if (!basicResult.ok) {
+    return await startScreen(ctx, { error: lookupErrorMessage(ctx, basicResult.code), values });
   }
 
-  const payload: Omit<ProxyOrderTokenPayload, "v" | "exp"> = {
-    shop: ctx.shop,
-    orderId: result.order.id,
-    orderName: result.order.name,
-    requestType,
-    customerId: null,
-  };
-  return await verifiedScreen(ctx, result, issueOrderToken(payload), values);
+  return orderFoundScreen(ctx, basicResult, values);
 }
 
 function lookupErrorMessage(ctx: ProxyContext, code: string): string {
@@ -595,17 +1013,368 @@ function lookupErrorMessage(ctx: ProxyContext, code: string): string {
     : portalErrorCodeToMessage(code as Parameters<typeof portalErrorCodeToMessage>[0], ctx.lang);
 }
 
+function orderFoundScreen(
+  ctx: ProxyContext,
+  result: PortalOrderResult,
+  back: LookupValues,
+  opts: { error?: string } = {},
+): string {
+  const order = result.order;
+  const t = COPY[ctx.lang];
+
+  // 1. Order meta strip
+  const deadlineDate = formatDate(result.deadline, ctx.lang);
+  const summary = `<div class="glr-order-meta-strip">
+  <div class="glr-meta-item">
+    <span class="glr-meta-label">${esc(t.order)}</span>
+    <strong class="glr-meta-value">${esc(order.name)}</strong>
+  </div>
+  <div class="glr-meta-item">
+    <span class="glr-meta-label">${esc(t.purchaseDate ?? "Purchase date")}</span>
+    <strong class="glr-meta-value">${esc(formatDate(order.createdAt, ctx.lang))}</strong>
+  </div>
+  <div class="glr-meta-item">
+    <span class="glr-meta-label">${esc(t.deadline)}</span>
+    <strong class="glr-meta-value">${esc(deadlineDate)}</strong>
+  </div>
+</div>`;
+
+  // 2. Product item cards
+  const eligibleItems = order.lineItems.filter((li) => !li.excluded);
+  const productList = eligibleItems
+    .map((li, index) => {
+      const img = li.variantImage
+        ? `<img src="${esc(li.variantImage.url)}" alt="${esc(li.variantImage.altText ?? li.title)}" class="glr-product-img">`
+        : `<div class="glr-product-img glr-product-img--placeholder">📦</div>`;
+      const price = li.variantPrice
+        ? `<div class="glr-product-cost">${esc(li.variantPrice)}</div>`
+        : "";
+      return `
+        <div class="glr-product-card">
+          <input type="checkbox" name="selected" value="${esc(li.id)}" class="glr-product-select" aria-label="Select ${esc(li.title)}" ${eligibleItems.length === 1 ? "checked" : ""} ${index === 0 ? "required" : ""}>
+          <div class="glr-product-thumb-wrap">${img}</div>
+          <div class="glr-product-details">
+            <strong class="glr-product-name">${esc(li.title)}</strong>
+            <span class="glr-product-quantity">Qty: ${esc(String(li.quantity))}</span>
+            ${price}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  const productsHtml = productList || `<p class="glr-muted">${esc(t.noEligibleItems ?? "No eligible items.")}</p>`;
+
+  // 6. Item quantities
+  const itemSelection = eligibleItems
+    .map((li) => `<input type="hidden" name="qty_${esc(li.id)}" value="${esc(String(li.quantity))}">`)
+    .join("");
+
+  const deadlineTime = new Date(result.deadline).getTime();
+  const deadlineFormatted = deadlineDate;
+  const daysLeft = Math.max(0, Math.ceil((deadlineTime - Date.now()) / (24 * 60 * 60 * 1000)));
+  const deadlineNoticeText = ctx.lang === "sv"
+    ? `Du har till <strong>${esc(deadlineFormatted)}</strong> på dig att begära retur eller byte (${daysLeft} dagar).`
+    : `You have until <strong>${esc(deadlineFormatted)}</strong> to request a return or exchange (${daysLeft} days).`;
+
+  const deadlineBanner = `<div class="glr-deadline-banner">
+  <svg class="glr-clock-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#de4066" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+    <circle cx="12" cy="12" r="10"/>
+    <polyline points="12 6 12 12 16 14"/>
+  </svg>
+  <span>${deadlineNoticeText}</span>
+</div>`;
+
+  // 4. Request type interactive cards
+  const typeCards = `
+<div class="glr-type-select-heading">${esc(t.requestType)}</div>
+<div class="glr-type-cards">
+  <label class="glr-type-card glr-type-card--selected" data-type="return">
+    <input type="radio" name="requestType" value="return" checked required>
+    <div class="glr-type-card-header">
+      <div class="glr-radio-circle"></div>
+      <div class="glr-type-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+      </div>
+    </div>
+    <div class="glr-type-content">
+      <div class="glr-type-name">${esc(t.types.return)}</div>
+      <div class="glr-type-desc">${esc(t.typeDescriptions.return)}</div>
+    </div>
+  </label>
+  <label class="glr-type-card" data-type="exchange">
+    <input type="radio" name="requestType" value="exchange" required>
+    <div class="glr-type-card-header">
+      <div class="glr-radio-circle"></div>
+      <div class="glr-type-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/>
+        </svg>
+      </div>
+    </div>
+    <div class="glr-type-content">
+      <div class="glr-type-name">${esc(t.types.exchange)}</div>
+      <div class="glr-type-desc">${esc(t.typeDescriptions.exchange)}</div>
+    </div>
+  </label>
+  <label class="glr-type-card" data-type="complaint">
+    <input type="radio" name="requestType" value="complaint" required>
+    <div class="glr-type-card-header">
+      <div class="glr-radio-circle"></div>
+      <div class="glr-type-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </div>
+    </div>
+    <div class="glr-type-content">
+      <div class="glr-type-name">${esc(t.types.complaint)}</div>
+      <div class="glr-type-desc">${esc(t.typeDescriptions.complaint)}</div>
+    </div>
+  </label>
+</div>`;
+
+  // 5. Reasons for each request type
+  const requestTypes: ProxyRequestType[] = ["return", "exchange", "complaint"];
+  const reasonSections = requestTypes.map((rt) => {
+    const reasons = (result.reasons || []).filter((r) => {
+      const applies = r.appliesTo.split(",").map((x) => x.trim().toLowerCase());
+      return applies.includes(rt) || applies.includes("any");
+    });
+    if (reasons.length === 0) return "";
+    const reasonOptions = reasons
+      .map((r) => `<option value="${esc(r.id)}">${esc(ctx.lang === "sv" && r.labelSv ? r.labelSv : r.labelEn)}</option>`)
+      .join("");
+    const reasonItems = order.lineItems
+      .filter((li) => !li.excluded)
+      .map((li) => `
+        <div class="glr-field-block">
+          <label class="glr-form-label">${esc(t.reason)} <span class="glr-required">*</span></label>
+          <div class="glr-select-wrap">
+            <select name="reason_${esc(li.id)}" class="glr-custom-select" required>
+              <option value="">${esc(t.chooseReason)}</option>
+              ${reasonOptions}
+            </select>
+            <svg class="glr-select-chevron" width="12" height="7" viewBox="0 0 12 7" fill="none">
+              <path d="M1 1L6 6L11 1" stroke="#6B7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+      `)
+      .join("");
+    return `
+      <div class="glr-reason-section glr-reason-section--${rt}" data-request-type="${rt}" style="${rt === "return" ? "display: block;" : "display: none;"}">
+        ${reasonItems}
+      </div>
+    `;
+  }).join("");
+
+  // 7. Hidden fields
+  const hiddenFields = ctx.loggedInCustomerId
+    ? `<input type="hidden" name="orderId" value="${esc(order.id)}">`
+    : `<input type="hidden" name="orderNumber" value="${esc(back.orderNumber)}">
+<input type="hidden" name="email" value="${esc(back.email)}">`;
+
+  // 8. Comment & photo blocks
+  const commentSection = `
+    <div class="glr-field-block return-comment-photo-row">
+      <label class="glr-form-label">${esc(COPY[ctx.lang].comment)}</label>
+      <div class="glr-textarea-wrap">
+        <textarea
+          id="glr-comment-field"
+          name="comment"
+          rows="3"
+          maxlength="500"
+          class="glr-custom-textarea"
+          placeholder="${esc(COPY[ctx.lang].commentMin(3))}"
+        ></textarea>
+      </div>
+      <div class="glr-char-counter" id="glr-char-count">0 / 500</div>
+    </div>
+  `;
+
+  const photoSection = `
+    <div class="glr-field-block return-comment-photo-row">
+      <label class="glr-form-label">${esc(COPY[ctx.lang].photos)}</label>
+      <div class="glr-dropzone" id="glr-dropzone">
+        <div class="glr-dropzone-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </div>
+        <div class="glr-dropzone-text">
+          <strong class="glr-dropzone-title">${esc(t.dragAndDrop)}</strong>
+          <span class="glr-dropzone-subtitle">${esc(COPY[ctx.lang].photosHint)} ${esc(COPY[ctx.lang].photosMin(1))}</span>
+        </div>
+        <button type="button" class="glr-dropzone-btn">${esc(t.chooseFilesBtn)}</button>
+        <input type="file" id="glr-photo-input" name="photo" accept="image/*" multiple style="display:none;">
+      </div>
+      <div id="glr-files-selected-text" style="display:none; margin-top:6px; font-size:12px; color:#111827; font-weight:500;"></div>
+    </div>
+  `;
+
+  // 9. Submit button
+  const submitButton = `
+    <div class="glr-submit-row">
+      <button type="submit" class="glr-submit-request-btn">
+        <span>${esc(t.submitRequest ?? "Submit request")}</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+      </button>
+    </div>
+  `;
+
+  // 10. Client script
+  const clientScript = `
+<script>
+  (function() {
+    function initTypeSelect() {
+      var cards = document.querySelectorAll('.glr-type-card');
+      var sections = document.querySelectorAll('.glr-reason-section');
+      var commentPhotoRows = document.querySelectorAll('.return-comment-photo-row');
+      var commentField = document.getElementById('glr-comment-field');
+      var charCount = document.getElementById('glr-char-count');
+      var fileInput = document.getElementById('glr-photo-input');
+      var fileInfo = document.getElementById('glr-files-selected-text');
+      var dropzone = document.getElementById('glr-dropzone');
+      var itemCheckboxes = document.querySelectorAll('input[name="selected"]');
+
+      function updateItemSelection() {
+        if (itemCheckboxes.length < 2) return;
+        var hasSelection = Array.from(itemCheckboxes).some(function(input) { return input.checked; });
+        itemCheckboxes[0].required = !hasSelection;
+      }
+
+      itemCheckboxes.forEach(function(input) {
+        input.addEventListener('change', updateItemSelection);
+      });
+      updateItemSelection();
+
+      function updateType() {
+        var checkedRadio = document.querySelector('input[name="requestType"]:checked');
+        var selectedVal = checkedRadio ? checkedRadio.value : 'return';
+        cards.forEach(function(card) {
+          if (card.dataset.type === selectedVal) {
+            card.classList.add('glr-type-card--selected');
+          } else {
+            card.classList.remove('glr-type-card--selected');
+          }
+        });
+        sections.forEach(function(sec) {
+          sec.style.display = sec.dataset.requestType === selectedVal ? 'block' : 'none';
+        });
+        commentPhotoRows.forEach(function(row) {
+          row.style.display = selectedVal === 'return' || selectedVal === 'complaint' ? 'block' : 'none';
+        });
+      }
+
+      cards.forEach(function(card) {
+        card.addEventListener('click', function(e) {
+          var radio = card.querySelector('input[type="radio"]');
+          if (radio) {
+            radio.checked = true;
+            updateType();
+          }
+        });
+      });
+
+      if (commentField && charCount) {
+        commentField.addEventListener('input', function() {
+          charCount.textContent = commentField.value.length + ' / 500';
+        });
+      }
+
+      if (fileInput && fileInfo) {
+        fileInput.addEventListener('change', function() {
+          if (fileInput.files && fileInput.files.length > 0) {
+            fileInfo.style.display = 'block';
+            fileInfo.textContent = fileInput.files.length + ' file(s) selected: ' + Array.from(fileInput.files).map(function(f) { return f.name; }).join(', ');
+          } else {
+            fileInfo.style.display = 'none';
+          }
+        });
+      }
+
+      if (dropzone && fileInput) {
+        dropzone.addEventListener('click', function(e) {
+          fileInput.click();
+        });
+        ['dragenter', 'dragover'].forEach(function(eventName) {
+          dropzone.addEventListener(eventName, function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.add('glr-dropzone--dragover');
+          });
+        });
+        ['dragleave', 'drop'].forEach(function(eventName) {
+          dropzone.addEventListener(eventName, function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('glr-dropzone--dragover');
+          });
+        });
+        dropzone.addEventListener('drop', function(e) {
+          if (e.dataTransfer && e.dataTransfer.files) {
+            fileInput.files = e.dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change'));
+          }
+        });
+      }
+
+      updateType();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initTypeSelect);
+    } else {
+      initTypeSelect();
+    }
+  })();
+</script>`;
+
+  const inner = form(
+    ctx,
+    "select_request_type",
+    `${hiddenFields}
+${itemSelection}
+${summary}
+${productsHtml}
+${deadlineBanner}
+${typeCards}
+${reasonSections}
+${commentSection}
+${photoSection}
+${submitButton}
+${clientScript}`,
+    { multipart: true },
+  );
+
+  return page({
+    title: t.title,
+    lead: t.lead,
+    body: errorBox(opts.error) + `<section class="glr-order-found-card"><h2 class="glr-card-heading">${esc(t.verifiedHeading ?? "Order found")}</h2>${inner}</section>`,
+    isTypeSelectPage: true,
+    lang: ctx.lang,
+  });
+}
+
 async function handleSelectOrder(request: Request, ctx: ProxyContext, formData: FormData) {
   const customerId = ctx.loggedInCustomerId;
-  const requestType = parseRequestType(formData.get("requestType"));
-  const values: LookupValues = { requestType: requestType ?? undefined };
+  const values: LookupValues = {};
   if (!customerId) {
     // Session ended between page load and submit.
     return await startScreen(ctx, { error: COPY[ctx.lang].unknownStage });
   }
   // Untrusted: only used as a lookup key. Ownership is checked against the signed customer id.
   const orderId = String(formData.get("orderId") || "").trim();
-  if (!orderId || !requestType) {
+  if (!orderId) {
     return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values });
   }
 
@@ -613,19 +1382,18 @@ async function handleSelectOrder(request: Request, ctx: ProxyContext, formData: 
     return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values });
   }
 
-  const result = await lookupOrderForCustomer(ctx.shop, orderId, customerId, requestType);
-  if (!result.ok) {
-    return await startScreen(ctx, { error: lookupErrorMessage(ctx, result.code), values });
+  // Basic validation for logged-in customer (checks ownership, fulfillment)
+  const basicResult = await lookupOrderForCustomerBasic(ctx.shop, orderId, customerId);
+  if (!basicResult.ok) {
+    return await startScreen(ctx, { error: lookupErrorMessage(ctx, basicResult.code), values });
   }
 
-  const token = issueOrderToken({
-    shop: ctx.shop,
-    orderId: result.order.id,
-    orderName: result.order.name,
-    requestType,
-    customerId,
-  });
-  return await verifiedScreen(ctx, result, token, values);
+  // For logged-in, we don't have orderNumber/email in the same way, but we need them for the form
+  const back: LookupValues = {
+    orderNumber: basicResult.order.name,
+    email: basicResult.order.email || "",
+  };
+  return orderFoundScreen(ctx, basicResult, back);
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -654,7 +1422,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
     return await startScreen(ctx, { error: lookupErrorMessage(ctx, result.code), values: back });
   }
   const model = await loadDetailsModel(ctx, result);
-  const values = readDetailsValues(formData);
+  const values = await readDetailsValues(formData);
   const fail = (error: string) => detailsScreen(ctx, result, model, rawToken, back, { error, values });
 
   // 3. Resolution must be one this shop allows for this request type.
@@ -680,15 +1448,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
     const comment = (values.comment[id] || "").trim() || null;
     if (comment && comment.length > MAX_COMMENT_LENGTH) return fail(t.commentTooLong);
 
-    const photos: { url: string; fileName?: string; mimeType?: string; size?: number }[] = [];
-    for (const entry of formData.getAll(`photo_${id}`)) {
-      if (!entry || typeof entry === "string") continue;
-      const f = entry as File;
-      if (f.size <= 0) continue;
-      if (!f.type.startsWith("image/")) return fail(t.imagesOnly);
-      if (f.size > MAX_PHOTO_SIZE) return fail(t.photoTooBig);
-      photos.push({ url: await fileToDataUrl(f), fileName: f.name, mimeType: f.type, size: f.size });
-    }
+    const photos: { url: string; fileName?: string; mimeType?: string; size?: number }[] = values.photos[id] ?? [];
 
     if (isComplaint && settings.claimRequiresPhoto && photos.length < settings.claimMinPhotos) {
       return fail(t.needPhotos(settings.claimMinPhotos, li.title));
@@ -717,7 +1477,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
       shop: ctx.shop,
       shopifyOrderId: result.order.id,
       orderNumber: result.order.name,
-      market: null,
+      market: result.order.market ?? null,
       customerEmail: result.order.email,
       customerName: null,
       type: token.requestType,
@@ -732,13 +1492,26 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
     return fail(t.submitFailed);
   }
 
+  let labelUrl: string | null = null;
+  let trackingUrl: string | null = null;
+  if (getLabelTimingForMarket(settings.labelTimingPerMarket, result.order.market) === "immediate") {
+    const generated = await createReturnLabel(created.id);
+    if (generated.ok) {
+      const label = await prisma.returnLabel.findUnique({ where: { returnRequestId: created.id } });
+      labelUrl = label?.labelUrl ?? null;
+      trackingUrl = label?.trackingUrl ?? null;
+    }
+  }
+
   await sendEventEmail(ctx.shop, "received", ctx.lang, result.order.email || "", {
     customerName: result.order.email || "customer",
     orderNumber: result.order.name,
     items: items.map((it) => it.title).join(", "),
+    labelLink: labelUrl || "",
+    trackingLink: trackingUrl || "",
   }).catch(() => null);
 
-  return confirmationScreen(ctx, created.requestNumber ?? "", token.requestType, settings.complaintRequireItemReturn);
+  return confirmationScreen(ctx, created.requestNumber ?? "", token.requestType, settings.complaintRequireItemReturn, labelUrl);
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -747,6 +1520,70 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const ctx = readProxyContext(request);
   return liquid(await startScreen(ctx), NO_STORE);
 };
+
+async function handleSelectRequestType(request: Request, ctx: ProxyContext, formData: FormData) {
+  const requestType = parseRequestType(formData.get("requestType"));
+
+  if (ctx.loggedInCustomerId) {
+    // Logged-in customer: use orderId from form
+    const orderId = String(formData.get("orderId") || "").trim();
+    const back: LookupValues = {};
+    if (!orderId || !requestType) {
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values: back });
+    }
+
+    if (!checkRateLimit(`proxy-customer:${ctx.shop}:${ctx.loggedInCustomerId}`)) {
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values: back });
+    }
+
+    const result = await lookupOrderForCustomer(ctx.shop, orderId, ctx.loggedInCustomerId, requestType);
+    if (!result.ok) {
+      return await startScreen(ctx, { error: lookupErrorMessage(ctx, result.code), values: back });
+    }
+
+    const token = issueOrderToken({
+      shop: ctx.shop,
+      orderId: result.order.id,
+      orderName: result.order.name,
+      requestType,
+      customerId: ctx.loggedInCustomerId,
+    });
+    return await verifiedScreen(ctx, result, token, back, formData);
+  } else {
+    // Guest: use orderNumber and email
+    const orderNumber = String(formData.get("orderNumber") || "").trim();
+    const email = String(formData.get("email") || "").trim();
+    const back: LookupValues = { orderNumber, email };
+
+    if (!orderNumber || !email || !requestType) {
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values: back });
+    }
+
+    // Rate limiting
+    const normalizedOrder = orderNumber.replace(/^#/, "").toLowerCase();
+    if (
+      !checkRateLimit(`proxy:${clientIp(request)}:${ctx.shop}`) ||
+      !checkRateLimit(`proxy-order:${ctx.shop}:${normalizedOrder}`)
+    ) {
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values: back });
+    }
+
+    // Full validation with the selected requestType
+    const result = await lookupAndValidateOrder(ctx.shop, orderNumber, email, requestType);
+    if (!result.ok) {
+      return await startScreen(ctx, { error: lookupErrorMessage(ctx, result.code), values: back });
+    }
+
+    const payload: Omit<ProxyOrderTokenPayload, "v" | "exp"> = {
+      shop: ctx.shop,
+      orderId: result.order.id,
+      orderName: result.order.name,
+      requestType,
+      customerId: null,
+    };
+    return await verifiedScreen(ctx, result, issueOrderToken(payload), back, formData);
+  }
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { liquid } = await authenticate.public.appProxy(request);
@@ -766,13 +1603,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "select_order":
       return liquid(await handleSelectOrder(request, ctx, formData), NO_STORE);
 
+    case "select_request_type":
+      return liquid(await handleSelectRequestType(request, ctx, formData), NO_STORE);
+
     case "restart":
       return liquid(
         await startScreen(ctx, {
           values: {
             orderNumber: String(formData.get("orderNumber") || ""),
             email: String(formData.get("email") || ""),
-            requestType: parseRequestType(formData.get("requestType")) ?? undefined,
           },
         }),
         NO_STORE,

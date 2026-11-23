@@ -22,6 +22,7 @@ export type SettingsInput = {
   claimMinCommentLength?: number;
   labelTimingPerMarket?: Record<string, "immediate" | "after_approval">;
   defaultReturnMethodPerMarket?: Record<string, { carrierId?: string; service?: string }>;
+  warehouseAddressesPerMarket?: Record<string, Record<string, string>>;
 };
 
 export async function getOrCreateSettings(shop: string) {
@@ -57,6 +58,8 @@ export async function updateSettings(shop: string, input: SettingsInput) {
     data.labelTimingPerMarket = JSON.stringify(input.labelTimingPerMarket);
   if (input.defaultReturnMethodPerMarket !== undefined)
     data.defaultReturnMethodPerMarket = JSON.stringify(input.defaultReturnMethodPerMarket);
+  if (input.warehouseAddressesPerMarket !== undefined)
+    data.warehouseAddressesPerMarket = JSON.stringify(input.warehouseAddressesPerMarket);
 
   return prisma.settings.upsert({
     where: { shop },
@@ -72,4 +75,10 @@ export function parseJson<T>(value: string | null | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+export function getLabelTimingForMarket(value: string | null | undefined, market: string | null | undefined) {
+  const timings = parseJson<Record<string, string>>(value, {});
+  const marketKey = market?.toUpperCase() || "DEFAULT";
+  return (timings[marketKey] ?? timings.DEFAULT) === "immediate" ? "immediate" : "after_approval";
 }
