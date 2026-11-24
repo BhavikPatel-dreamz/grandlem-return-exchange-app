@@ -19,6 +19,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const dateFrom = url.searchParams.get("dateFrom")?.trim() || "";
   const dateTo = url.searchParams.get("dateTo")?.trim() || "";
   const market = url.searchParams.get("market")?.trim() || "";
+  const fulfillmentLocation = url.searchParams.get("fulfillmentLocation")?.trim() || "";
   const lang = "en";
 
   const where: any = { shop };
@@ -40,6 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (type) where.type = type;
   if (market) where.market = market;
   if (carrier) where.carrierId = carrier;
+  if (fulfillmentLocation) where.fulfillmentLocationId = fulfillmentLocation;
   if (flagged === "1") where.reviewFlagged = true;
   if (dateFrom || dateTo) {
     where.submittedAt = {};
@@ -69,7 +71,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     (m) => m && m !== "DEFAULT"
   );
 
-  return { shop, requests, carriers, lang, filters: { q, status, type, carrier, flagged, dateFrom, dateTo, market }, warehouseMarkets };
+  // Get unique fulfillment locations from requests
+  const fulfillmentLocations = Array.from(
+    new Set(requests.map((r: any) => r.fulfillmentLocationId).filter(Boolean))
+  );
+
+  return { shop, requests, carriers, lang, filters: { q, status, type, carrier, flagged, dateFrom, dateTo, market, fulfillmentLocation }, warehouseMarkets, fulfillmentLocations };
 };
 
 function EmptyReturnsIllustration() {
@@ -209,6 +216,24 @@ export default function ReturnsListPage() {
                 />
               </div>
             </Form>
+
+            {data.fulfillmentLocations.length > 0 && (
+              <Form method="get" className="returbo-filter-form">
+                {data.filters.status && <input type="hidden" name="status" value={data.filters.status} />}
+                {data.filters.q && <input type="hidden" name="q" value={data.filters.q} />}
+                <select
+                  name="fulfillmentLocation"
+                  defaultValue={data.filters.fulfillmentLocation}
+                  className="returbo-filter-select"
+                  onChange={(e) => { const form = e.currentTarget.closest('form'); form?.requestSubmit(); }}
+                >
+                  <option value="">All fulfillment locations</option>
+                  {data.fulfillmentLocations.map((loc: string) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </Form>
+            )}
           </div>
         </div>
 

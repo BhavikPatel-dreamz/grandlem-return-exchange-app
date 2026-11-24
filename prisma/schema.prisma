@@ -171,6 +171,7 @@ model ReturnRequest {
   carrierId     String?
   reviewFlagged Boolean  @default(false)
   countryCode String @default("")
+  fulfillmentLocationId String?
   outcome ReturnOutcome?
   // Phase 13
   requestedResolution     String?
@@ -202,6 +203,7 @@ model ReturnRequest {
   @@index([shop])
   @@index([shop, status])
   @@index([shop, shopifyOrderId])
+  @@index([shop, fulfillmentLocationId])
 }
 
 model ReturnItem {

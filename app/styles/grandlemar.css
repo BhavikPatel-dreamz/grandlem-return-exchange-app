@@ -683,6 +683,192 @@ s-button[variant="secondary"]::part(button) {
   font-size: 13px;
 }
 
+/* Return Policy Form Modern Reference */
+.returbo-policy-tip-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background-color: #f0f7ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.returbo-policy-tip-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.returbo-policy-tip-close {
+  background: none;
+  border: none;
+  padding: 3px;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.returbo-policy-tip-close:hover {
+  color: #1e293b;
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.returbo-policy-lang-box {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-top: 16px;
+}
+
+.returbo-policy-lang-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.returbo-policy-lang-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.returbo-policy-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  color: #de4066;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.returbo-policy-edit-btn:hover {
+  background-color: #fff1f4;
+}
+
+.returbo-policy-text {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #374151;
+  margin: 12px 0 10px;
+}
+
+.returbo-policy-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #de4066;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.returbo-policy-expand-btn:hover {
+  text-decoration: underline;
+}
+
+/* Return Policy WYSIWYG Editor */
+.returbo-editor-box {
+  margin-top: 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.returbo-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  flex-wrap: wrap;
+}
+
+.returbo-editor-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.returbo-editor-toolbar-btn {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-editor-toolbar-btn:hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.returbo-editor-toolbar-btn:active {
+  background-color: #e5e7eb;
+}
+
+.returbo-editor-content {
+  min-height: 200px;
+  padding: 16px 18px;
+  outline: none;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #374151;
+  background: #ffffff;
+  font-family: inherit;
+}
+
+.returbo-policy-save-btn {
+  background-color: #de4066;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.returbo-policy-save-btn:hover {
+  background-color: #c93558;
+}
+
+.returbo-policy-save-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .returbo-policy-preview { border: 1px solid var(--returbo-border); border-radius: 7px; padding: 18px; }
 .returbo-policy-preview-header { display: flex; justify-content: space-between; align-items: center; color: var(--returbo-text-muted); font-size: 12px; }
 .returbo-policy-preview h3 { margin: 17px 0 7px; font-family: Georgia, "Times New Roman", serif; font-size: 18px; }

@@ -37,6 +37,7 @@ export type PortalOrderResult = {
     fulfillmentStatus: string | null;
     lineItems: PortalLineItem[];
     market?: string | null;
+    fulfillmentLocationId?: string | null;
   };
   eligibleLineItemIds: string[];
   deadline: string;
@@ -78,6 +79,13 @@ const ORDER_QUERY = `#graphql
           createdAt
           displayFulfillmentStatus
           shippingAddress { countryCodeV2 }
+          fulfillmentOrders(first: 10) {
+            edges {
+              node {
+                assignedLocation { id name }
+              }
+            }
+          }
           lineItems(first: 50) {
             edges {
               node {
@@ -213,6 +221,8 @@ async function validateOrderNode(
     return { ok: false, code: "DEADLINE_EXPIRED", message: "Request deadline has expired." };
   }
 
+  const fulfillmentLocationId = node.fulfillmentOrders?.edges?.[0]?.node?.assignedLocation?.id ?? null;
+
   // ensure settings exist for shop (side effect ok)
   await getOrCreateSettings(shop);
   const reasons = await listReturnReasons(shop, true);
@@ -228,6 +238,7 @@ async function validateOrderNode(
       fulfillmentStatus,
       lineItems,
       market: node.shippingAddress?.countryCodeV2 ?? null,
+      fulfillmentLocationId,
     },
     eligibleLineItemIds,
     deadline: deadline.toISOString(),

@@ -137,6 +137,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: requestType,
       autoApprove: settings.autoApproveRequests,
       items,
+      fulfillmentLocationId: result.order.fulfillmentLocationId ?? null,
     });
 
     let labelUrl: string | null = null;
