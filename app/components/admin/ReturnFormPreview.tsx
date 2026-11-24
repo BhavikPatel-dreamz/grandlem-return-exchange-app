@@ -105,33 +105,12 @@ export function ReturnFormPreview({
                 marginBottom: 8,
               }}
             >
-              {showLogo && (
-                logoUrl ? (
-                  <img
-                    src={logoUrl}
-                    alt="Store logo"
-                    style={{ maxHeight: 28, maxWidth: 90, objectFit: "contain", borderRadius: 4 }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 4,
-                      background: "#000000",
-                      color: "#ffffff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontWeight: 800,
-                      fontSize: 10.5,
-                      letterSpacing: "0.04em",
-                      flexShrink: 0,
-                    }}
-                  >
-                    GLM
-                  </div>
-                )
+              {showLogo && logoUrl && (
+                <img
+                  src={logoUrl}
+                  alt="Store logo"
+                  style={{ maxHeight: 28, maxWidth: 90, objectFit: "contain", borderRadius: 4 }}
+                />
               )}
               {showStoreName && (
                 <span

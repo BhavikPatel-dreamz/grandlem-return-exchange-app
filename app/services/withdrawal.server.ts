@@ -32,6 +32,7 @@ export async function createWithdrawal(shop: string, orderNumber: string, email:
     customerName: null,
     type: "return",
     items,
+    fulfillmentLocationId: result.order.fulfillmentLocationId ?? null,
   });
 
   await prisma.returnRequest.update({

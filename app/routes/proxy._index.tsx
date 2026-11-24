@@ -1499,6 +1499,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
       type: token.requestType,
       autoApprove: settings.autoApproveRequests,
       items,
+      fulfillmentLocationId: result.order.fulfillmentLocationId ?? null,
     });
     await prisma.returnRequest.update({
       where: { id: created.id },

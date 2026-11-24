@@ -1,4 +1,7 @@
 import prisma from "../db.server";
+import { DEFAULT_RETURN_POLICY_EN } from "./return-policy";
+
+export { DEFAULT_RETURN_POLICY_EN } from "./return-policy";
 
 export type SettingsInput = {
   returnDeadlineDays?: number;
@@ -185,3 +188,18 @@ export function getLabelTimingForMarket(value: string | null | undefined, market
   const marketKey = market?.toUpperCase() || "DEFAULT";
   return (timings[marketKey] ?? timings.DEFAULT) === "immediate" ? "immediate" : "after_approval";
 }
+
+export function getReturnPolicy(settings?: { labelTimingPerMarket?: string | null } | null): string {
+  const timings = parseJson<Record<string, string>>(settings?.labelTimingPerMarket, {});
+  return timings["__return_policy_en"] || DEFAULT_RETURN_POLICY_EN;
+}
+
+export async function updateReturnPolicy(shop: string, policyText: string) {
+  const current = await getOrCreateSettings(shop);
+  const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
+  timings["__return_policy_en"] = policyText;
+  return updateSettings(shop, {
+    labelTimingPerMarket: timings as Record<string, "immediate" | "after_approval">,
+  });
+}
+

@@ -277,9 +277,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 
+const MARKET_INFO: Record<string, { label: string; flag: string; badge: string; description: string }> = {
+  DEFAULT: {
+    label: "Default fallback",
+    flag: "🌐",
+    badge: "All other markets",
+    description: "Fallback destination and carrier rules for all customer return requests not covered by a specific country rule.",
+  },
+  US: {
+    label: "United States",
+    flag: "🇺🇸",
+    badge: "US",
+    description: "Destination warehouse and carrier configuration for return orders shipped from the United States.",
+  },
+  SE: {
+    label: "Sweden",
+    flag: "🇸🇪",
+    badge: "SE",
+    description: "Destination warehouse and carrier configuration for return orders shipped from Sweden.",
+  },
+  GB: {
+    label: "United Kingdom",
+    flag: "🇬🇧",
+    badge: "GB",
+    description: "Destination warehouse and carrier configuration for return orders shipped from the United Kingdom.",
+  },
+};
+
 export function SettingsView() {
   const data = useLoaderData<typeof loader>();
-  const [activeTab, setActiveTab] = useState<"general" | "compliance" | "extensions">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "compliance" | "integrations">("general");
+  const [showExtendForm, setShowExtendForm] = useState(false);
+  const [selectedRoutingMarket, setSelectedRoutingMarket] = useState<string>("DEFAULT");
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   useEffect(() => {
@@ -305,47 +334,422 @@ export function SettingsView() {
         </button>
         <button
           type="button"
-          className={`returbo-pill-btn ${activeTab === "extensions" ? "active" : ""}`}
-          onClick={() => setActiveTab("extensions")}
+          className={`returbo-pill-btn ${activeTab === "integrations" ? "active" : ""}`}
+          onClick={() => setActiveTab("integrations")}
         >
-          Extensions & More
+          Integrations
         </button>
       </div>
 
       <div style={{ display: activeTab === "general" ? "block" : "none" }}>
         <ReturnReasonsSection reasons={data.reasons} />
 
-        <div className="returbo-card">
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">Deadlines (days)</h2>
-            <p className="returbo-card-subtitle">Set return and exchange deadlines and claim requirements.</p>
+        {/* Request deadline card */}
+        <div className="returbo-card" style={{ marginBottom: 22 }}>
+          <div className="returbo-card-header" style={{ marginBottom: 18, paddingBottom: 0, borderBottom: "none" }}>
+            <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
+              Request deadline
+            </h2>
+            <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+              You can limit the time that a customer has to send in any request from the time the order was fulfilled.
+            </p>
           </div>
+
           <Form method="post">
             <input type="hidden" name="_action" value="save_settings" />
-            <s-stack direction="block" gap="base">
-              <s-number-field name="returnDeadlineDays" label="Return deadline" value={String(data.settings.returnDeadlineDays)} />
-              <s-number-field name="exchangeDeadlineDays" label="Exchange deadline" value={String(data.settings.exchangeDeadlineDays)} />
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" name="autoRefundOnInspection" defaultChecked={data.settings.autoRefundOnInspection} style={{ accentColor: "var(--returbo-pink)" }} />
-                <span>Auto refund on inspection</span>
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" name="refundShippingCost" defaultChecked={data.settings.refundShippingCost} style={{ accentColor: "var(--returbo-pink)" }} />
-                <span>Include shipping in refunds</span>
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" name="claimRequiresPhoto" defaultChecked={data.settings.claimRequiresPhoto} style={{ accentColor: "var(--returbo-pink)" }} />
-                <span>Require photo for complaints</span>
-              </label>
-              <s-number-field name="claimMinPhotos" label="Minimum photos per complaint item" value={String(data.settings.claimMinPhotos)} />
-              <s-number-field name="claimMinCommentLength" label="Minimum comment length for complaints" value={String(data.settings.claimMinCommentLength)} />
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {/* Returns */}
               <div>
-                <button type="submit" className="returbo-btn-primary">Save deadlines</button>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#111827", marginBottom: 6 }}>
+                  Returns
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12.5, color: "#374151" }}>
+                  <input
+                    type="number"
+                    name="returnDeadlineDays"
+                    defaultValue={String(data.settings.returnDeadlineDays ?? 14)}
+                    style={{
+                      width: 58,
+                      height: 34,
+                      textAlign: "center",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 4,
+                      fontSize: 12.5,
+                      color: "#111827",
+                      background: "#ffffff",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <select
+                    name="returnDeadlineUnit"
+                    defaultValue="days"
+                    style={{
+                      height: 34,
+                      padding: "0 8px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 4,
+                      fontSize: 12.5,
+                      color: "#111827",
+                      background: "#ffffff",
+                      cursor: "pointer",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <option value="days">Days</option>
+                    <option value="weeks">Weeks</option>
+                    <option value="months">Months</option>
+                  </select>
+                  <span>
+                    is the general allowed period to submit a <strong>return request</strong> after the item has been shipped.
+                  </span>
+                  <span title="Allowed period after shipment" style={{ color: "#9ca3af", cursor: "help", display: "inline-flex", alignItems: "center" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                  </span>
+                </div>
               </div>
-            </s-stack>
+
+              {/* Exchanges */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#111827", marginBottom: 6 }}>
+                  Exchanges
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12.5, color: "#374151" }}>
+                  <input
+                    type="number"
+                    name="exchangeDeadlineDays"
+                    defaultValue={String(data.settings.exchangeDeadlineDays ?? 14)}
+                    style={{
+                      width: 58,
+                      height: 34,
+                      textAlign: "center",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 4,
+                      fontSize: 12.5,
+                      color: "#111827",
+                      background: "#ffffff",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <select
+                    name="exchangeDeadlineUnit"
+                    defaultValue="days"
+                    style={{
+                      height: 34,
+                      padding: "0 8px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 4,
+                      fontSize: 12.5,
+                      color: "#111827",
+                      background: "#ffffff",
+                      cursor: "pointer",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <option value="days">Days</option>
+                    <option value="weeks">Weeks</option>
+                    <option value="months">Months</option>
+                  </select>
+                  <span>
+                    is the general allowed period to submit an <strong>exchange request</strong> after the item has been shipped.
+                  </span>
+                </div>
+              </div>
+
+              {/* Inspection and Claim Requirements */}
+              <div style={{ marginTop: 14, paddingTop: 16, borderTop: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    name="autoRefundOnInspection"
+                    defaultChecked={data.settings.autoRefundOnInspection}
+                    style={{ width: 15, height: 15, accentColor: "#de4066", cursor: "pointer" }}
+                  />
+                  <span>Auto refund on inspection</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    name="refundShippingCost"
+                    defaultChecked={data.settings.refundShippingCost}
+                    style={{ width: 15, height: 15, accentColor: "#de4066", cursor: "pointer" }}
+                  />
+                  <span>Include shipping in refunds</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    name="claimRequiresPhoto"
+                    defaultChecked={data.settings.claimRequiresPhoto}
+                    style={{ width: 15, height: 15, accentColor: "#de4066", cursor: "pointer" }}
+                  />
+                  <span>Require photo for complaints</span>
+                </label>
+                <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 4 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#374151" }}>
+                    <span>Minimum photos per complaint:</span>
+                    <input
+                      type="number"
+                      name="claimMinPhotos"
+                      defaultValue={String(data.settings.claimMinPhotos)}
+                      style={{ width: 50, height: 30, textAlign: "center", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 12.5 }}
+                    />
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#374151" }}>
+                    <span>Minimum comment length for complaints:</span>
+                    <input
+                      type="number"
+                      name="claimMinCommentLength"
+                      defaultValue={String(data.settings.claimMinCommentLength)}
+                      style={{ width: 50, height: 30, textAlign: "center", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 12.5 }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                <button
+                  type="submit"
+                  style={{
+                    backgroundColor: "#de4066",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "8px 20px",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    boxShadow: "0 1px 2px rgba(222, 64, 102, 0.2)",
+                  }}
+                >
+                  Save changes
+                </button>
+              </div>
+            </div>
           </Form>
         </div>
 
+        {/* Extending deadline on a specific order card */}
+        <div className="returbo-card" style={{ marginBottom: 22 }}>
+          <div className="returbo-card-header" style={{ marginBottom: 14, paddingBottom: 0, borderBottom: "none" }}>
+            <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
+              Extending deadline on a specific order
+            </h2>
+            <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+              Extend the deadline on a specific order, so that the customer can still submit a request even after the general deadline has passed.
+            </p>
+          </div>
+
+          {!showExtendForm ? (
+            <button
+              type="button"
+              onClick={() => setShowExtendForm(true)}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                color: "#de4066",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span>+ Extend deadline on specific order</span>
+            </button>
+          ) : (
+            <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "16px 18px", marginTop: 10 }}>
+              <Form method="post">
+                <input type="hidden" name="_action" value="create_deadline_extension" />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Shopify Order ID</label>
+                    <input
+                      type="text"
+                      name="shopifyOrderId"
+                      placeholder="e.g. 1021"
+                      required
+                      style={{ width: "100%", height: 34, border: "1px solid #d1d5db", borderRadius: 6, padding: "0 10px", fontSize: 13, boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Type</label>
+                    <select
+                      name="deadlineType"
+                      style={{ width: "100%", height: 34, border: "1px solid #d1d5db", borderRadius: 6, padding: "0 10px", fontSize: 13, boxSizing: "border-box", background: "#ffffff" }}
+                    >
+                      <option value="return">Return</option>
+                      <option value="exchange">Exchange</option>
+                      <option value="complaint">Complaint</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>New deadline</label>
+                    <input
+                      type="date"
+                      name="newDeadline"
+                      required
+                      style={{ width: "100%", height: 34, border: "1px solid #d1d5db", borderRadius: 6, padding: "0 10px", fontSize: 13, boxSizing: "border-box", background: "#ffffff" }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Note (optional)</label>
+                    <input
+                      type="text"
+                      name="note"
+                      placeholder="Reason for extension"
+                      style={{ width: "100%", height: 34, border: "1px solid #d1d5db", borderRadius: 6, padding: "0 10px", fontSize: 13, boxSizing: "border-box" }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowExtendForm(false)}
+                    style={{ background: "#ffffff", border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 14px", fontSize: 12.5, fontWeight: 500, color: "#374151", cursor: "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    style={{ backgroundColor: "#de4066", color: "#ffffff", border: "none", borderRadius: 6, padding: "6px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Save extension
+                  </button>
+                </div>
+              </Form>
+            </div>
+          )}
+
+          {/* Active Extensions List */}
+          {data.deadlineExtensions.length > 0 && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #f1f5f9" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 8 }}>
+                Active Extensions ({data.deadlineExtensions.length})
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {data.deadlineExtensions.map((d: any) => (
+                  <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", border: "1px solid #e5e7eb", borderRadius: 6, background: "#fafafa" }}>
+                    <div style={{ fontSize: 12.5, color: "#1f2937" }}>
+                      <strong>Order {d.shopifyOrderId}</strong> – {d.type}: {new Date(d.newDeadline).toLocaleDateString()}{" "}
+                      {d.note && <span style={{ color: "#6b7280" }}>({d.note})</span>}
+                    </div>
+                    <Form method="post" style={{ display: "inline" }}>
+                      <input type="hidden" name="_action" value="delete_deadline_extension" />
+                      <input type="hidden" name="id" value={d.id} />
+                      <button
+                        type="submit"
+                        style={{ background: "none", border: "none", color: "#ef4444", fontSize: 12, cursor: "pointer", fontWeight: 500 }}
+                      >
+                        Delete
+                      </button>
+                    </Form>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      <div style={{ display: activeTab === "compliance" ? "block" : "none" }}>
+        <div className="returbo-card" style={{ marginBottom: 24 }}>
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">Reviewing and pre-approving return requests</h2>
+            <p className="returbo-card-subtitle">
+              Choose whether requests are approved automatically or held for manual review before labels are sent. Automatic approval does not issue refunds; refunds still follow your normal review process.
+            </p>
+          </div>
+          <Form method="post">
+            <input type="hidden" name="_action" value="save_approval_settings" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                <input
+                  type="radio"
+                  id="auto-approve-requests-yes"
+                  aria-labelledby="auto-approve-requests-yes-label"
+                  name="autoApproveRequests"
+                  value="true"
+                  defaultChecked={data.settings.autoApproveRequests}
+                  style={{ accentColor: "var(--returbo-pink)" }}
+                />
+                <span id="auto-approve-requests-yes-label"><strong>Automatically pre-approve all your return requests</strong></span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                <input
+                  type="radio"
+                  id="auto-approve-requests-no"
+                  aria-labelledby="auto-approve-requests-no-label"
+                  name="autoApproveRequests"
+                  value="false"
+                  defaultChecked={!data.settings.autoApproveRequests}
+                  style={{ accentColor: "var(--returbo-pink)" }}
+                />
+                <span id="auto-approve-requests-no-label"><strong>Manually pre-approve all your return requests</strong></span>
+              </div>
+            </div>
+            <button type="submit" className="returbo-btn-primary">Save approval settings</button>
+          </Form>
+        </div>
+
+        <ReturnImageCommentSection config={data.returnImageCommentConfig} />
+
+        <div className="returbo-card">
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">Exclusion rules</h2>
+            <p className="returbo-card-subtitle">Specify products, collections, or variants excluded from returns or exchanges.</p>
+          </div>
+          <Form method="post" style={{ marginBottom: 20 }}>
+            <input type="hidden" name="_action" value="create_exclusion" />
+            <s-stack direction="block" gap="base">
+              <s-select name="targetType" label="Target type">
+                <s-option value="collection">Collection</s-option>
+                <s-option value="product">Product</s-option>
+                <s-option value="variant">Variant</s-option>
+              </s-select>
+              <s-text-field name="targetId" label="Target ID (GID/numeric)" />
+              <s-checkbox name="appliesToReturns" label="Applies to returns" defaultChecked />
+              <s-checkbox name="appliesToExchanges" label="Applies to exchanges" defaultChecked />
+              <div>
+                <button type="submit" className="returbo-btn-primary">Add exclusion</button>
+              </div>
+            </s-stack>
+          </Form>
+          <div className="returbo-card-header" style={{ marginTop: 24, marginBottom: 12 }}>
+            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Active Exclusion Rules ({data.exclusions.length})</h3>
+          </div>
+          <div>
+            {data.exclusions.length === 0 && (
+              <p style={{ color: "var(--returbo-text-muted)", fontSize: 13, margin: "12px 0" }}>No exclusion rules configured yet.</p>
+            )}
+            {data.exclusions.map((e) => (
+              <div key={e.id} className="returbo-list-item">
+                <div>
+                  <strong>{e.targetType}</strong>: <code>{e.targetId}</code>{" "}
+                  <span className="returbo-badge returbo-badge-gray" style={{ marginLeft: 6 }}>
+                    returns: {String(e.appliesToReturns)} | exchanges: {String(e.appliesToExchanges)}
+                  </span>
+                </div>
+                <Form method="post" style={{ display: "inline" }}>
+                  <input type="hidden" name="_action" value="delete_exclusion" />
+                  <input type="hidden" name="id" value={e.id} />
+                  <s-button type="submit" variant="tertiary">Delete</s-button>
+                </Form>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: activeTab === "integrations" ? "block" : "none" }}>
         <div className="returbo-card">
           <div className="returbo-card-header">
             <h2 className="returbo-card-title">ShippyPro connection</h2>
@@ -420,141 +824,6 @@ export function SettingsView() {
               </div>
             </s-stack>
           </Form>
-        </div>
-      </div>
-
-      <div style={{ display: activeTab === "compliance" ? "block" : "none" }}>
-        <ReturnImageCommentSection config={data.returnImageCommentConfig} />
-
-        <div className="returbo-card" style={{ marginBottom: 24 }}>
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">Reviewing and pre-approving return requests</h2>
-            <p className="returbo-card-subtitle">
-              Choose whether requests are approved automatically or held for manual review before labels are sent. Automatic approval does not issue refunds; refunds still follow your normal review process.
-            </p>
-          </div>
-          <Form method="post">
-            <input type="hidden" name="_action" value="save_approval_settings" />
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-                <input
-                  type="radio"
-                  id="auto-approve-requests-yes"
-                  aria-labelledby="auto-approve-requests-yes-label"
-                  name="autoApproveRequests"
-                  value="true"
-                  defaultChecked={data.settings.autoApproveRequests}
-                  style={{ accentColor: "var(--returbo-pink)" }}
-                />
-                <span id="auto-approve-requests-yes-label"><strong>Automatically pre-approve all your return requests</strong></span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-                <input
-                  type="radio"
-                  id="auto-approve-requests-no"
-                  aria-labelledby="auto-approve-requests-no-label"
-                  name="autoApproveRequests"
-                  value="false"
-                  defaultChecked={!data.settings.autoApproveRequests}
-                  style={{ accentColor: "var(--returbo-pink)" }}
-                />
-                <span id="auto-approve-requests-no-label"><strong>Manually pre-approve all your return requests</strong></span>
-              </div>
-            </div>
-            <button type="submit" className="returbo-btn-primary">Save approval settings</button>
-          </Form>
-        </div>
-
-        <div className="returbo-card">
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">Exclusion rules</h2>
-            <p className="returbo-card-subtitle">Specify products, collections, or variants excluded from returns or exchanges.</p>
-          </div>
-          <Form method="post" style={{ marginBottom: 20 }}>
-            <input type="hidden" name="_action" value="create_exclusion" />
-            <s-stack direction="block" gap="base">
-              <s-select name="targetType" label="Target type">
-                <s-option value="collection">Collection</s-option>
-                <s-option value="product">Product</s-option>
-                <s-option value="variant">Variant</s-option>
-              </s-select>
-              <s-text-field name="targetId" label="Target ID (GID/numeric)" />
-              <s-checkbox name="appliesToReturns" label="Applies to returns" defaultChecked />
-              <s-checkbox name="appliesToExchanges" label="Applies to exchanges" defaultChecked />
-              <div>
-                <button type="submit" className="returbo-btn-primary">Add exclusion</button>
-              </div>
-            </s-stack>
-          </Form>
-          <div className="returbo-card-header" style={{ marginTop: 24, marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Active Exclusion Rules ({data.exclusions.length})</h3>
-          </div>
-          <div>
-            {data.exclusions.length === 0 && (
-              <p style={{ color: "var(--returbo-text-muted)", fontSize: 13, margin: "12px 0" }}>No exclusion rules configured yet.</p>
-            )}
-            {data.exclusions.map((e) => (
-              <div key={e.id} className="returbo-list-item">
-                <div>
-                  <strong>{e.targetType}</strong>: <code>{e.targetId}</code>{" "}
-                  <span className="returbo-badge returbo-badge-gray" style={{ marginLeft: 6 }}>
-                    returns: {String(e.appliesToReturns)} | exchanges: {String(e.appliesToExchanges)}
-                  </span>
-                </div>
-                <Form method="post" style={{ display: "inline" }}>
-                  <input type="hidden" name="_action" value="delete_exclusion" />
-                  <input type="hidden" name="id" value={e.id} />
-                  <s-button type="submit" variant="tertiary">Delete</s-button>
-                </Form>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: activeTab === "extensions" ? "block" : "none" }}>
-        <div className="returbo-card">
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">Order-specific deadline extensions</h2>
-            <p className="returbo-card-subtitle">Extend return or exchange deadlines for specific orders upon customer request.</p>
-          </div>
-          <Form method="post" style={{ marginBottom: 20 }}>
-            <input type="hidden" name="_action" value="create_deadline_extension" />
-            <s-stack direction="block" gap="base">
-              <s-text-field name="shopifyOrderId" label="Shopify Order ID" />
-              <s-select name="deadlineType" label="Type">
-                <s-option value="return">Return</s-option>
-                <s-option value="exchange">Exchange</s-option>
-                <s-option value="complaint">Complaint</s-option>
-              </s-select>
-              <s-date-field name="newDeadline" label="New deadline" />
-              <s-text-field name="note" label="Note" />
-              <div>
-                <button type="submit" className="returbo-btn-primary">Save extension</button>
-              </div>
-            </s-stack>
-          </Form>
-          <div className="returbo-card-header" style={{ marginTop: 24, marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Active Extensions ({data.deadlineExtensions.length})</h3>
-          </div>
-          <div>
-            {data.deadlineExtensions.length === 0 && (
-              <p style={{ color: "var(--returbo-text-muted)", fontSize: 13, margin: "12px 0" }}>No order-specific deadline extensions.</p>
-            )}
-            {data.deadlineExtensions.map((d) => (
-              <div key={d.id} className="returbo-list-item">
-                <div>
-                  <strong>Order {d.shopifyOrderId}</strong> – {d.type}: {new Date(d.newDeadline).toLocaleDateString()}{" "}
-                  {d.note && <span style={{ color: "var(--returbo-text-muted)", fontSize: 13 }}>({d.note})</span>}
-                </div>
-                <Form method="post" style={{ display: "inline" }}>
-                  <input type="hidden" name="_action" value="delete_deadline_extension" />
-                  <input type="hidden" name="id" value={d.id} />
-                  <s-button type="submit" variant="tertiary">Delete</s-button>
-                </Form>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </SettingsLayout>
