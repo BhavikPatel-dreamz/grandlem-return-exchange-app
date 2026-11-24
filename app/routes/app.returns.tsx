@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState, useEffect } from "react";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { Form, Link, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -8,7 +9,7 @@ import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
 import { getOrCreateSettings } from "../services/settings.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim() || "";
@@ -40,7 +41,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   if (type) where.type = type;
   if (market) where.market = market;
-  if (carrier) where.carrierId = carrier;
+  if (carrier) {
+    where.AND = [{ OR: [{ carrierId: carrier }, { label: { is: { carrierId: carrier } } }] }];
+  }
   if (fulfillmentLocation) where.fulfillmentLocationId = fulfillmentLocation;
   if (flagged === "1") where.reviewFlagged = true;
   if (dateFrom || dateTo) {
@@ -59,9 +62,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const requests = await prisma.returnRequest.findMany({
     where,
-    include: { label: true, items: true },
+    include: { label: true, items: { include: { reason: true } } },
     orderBy: { submittedAt: "desc" },
-    take: 100,
+    take: 500,
   });
 
   const carriers = await prisma.carrier.findMany({ where: { shop } });
@@ -71,10 +74,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     (m) => m && m !== "DEFAULT"
   );
 
-  // Get unique fulfillment locations from requests
-  const fulfillmentLocations = Array.from(
+  const fulfillmentLocationIds = Array.from(
     new Set(requests.map((r: any) => r.fulfillmentLocationId).filter(Boolean))
   );
+  let fulfillmentLocations: { id: string; label: string }[] = [];
+  try {
+    const locationResponse = await admin.graphql(`#graphql
+      query returnsFulfillmentLocations {
+        locations(first: 250) {
+          edges {
+            node {
+              id
+              name
+              address { formatted }
+            }
+          }
+        }
+      }
+    `);
+    const locationData = await locationResponse.json();
+    fulfillmentLocations = (locationData?.data?.locations?.edges ?? []).map(({ node }: any) => ({
+      id: node.id,
+      label: node.address?.formatted?.filter(Boolean).join(", ") || node.name || node.id,
+    }));
+  } catch {
+    // Keep the filter usable with saved IDs if Shopify location details are unavailable.
+  }
+  const knownLocationIds = new Set(fulfillmentLocations.map((location) => location.id));
+  for (const id of fulfillmentLocationIds) {
+    if (!knownLocationIds.has(id)) fulfillmentLocations.push({ id, label: id });
+  }
 
   return { shop, requests, carriers, lang, filters: { q, status, type, carrier, flagged, dateFrom, dateTo, market, fulfillmentLocation }, warehouseMarkets, fulfillmentLocations };
 };
@@ -118,6 +147,20 @@ export default function ReturnsListPage() {
   const dateLocale = "en-GB";
   const formatDate = (date: string | Date) => new Intl.DateTimeFormat(dateLocale).format(new Date(date));
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+  const totalRequests = data.requests.length;
+  const totalPages = Math.max(1, Math.ceil(totalRequests / pageSize));
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [data.filters]);
+
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalRequests);
+  const paginatedRequests = data.requests.slice(startIndex, endIndex);
+
   const pills = [
     { label: "All", value: "" },
     { label: "Requests", value: "requests" },
@@ -139,28 +182,69 @@ export default function ReturnsListPage() {
   };
 
   const handleExport = () => {
-    if (!data.requests.length) return;
-    const headers = ["Order Number", "Date", "Customer Email", "Type", "Status", "Tracking"];
+    const headers = [
+      "Request Number",
+      "Order Number",
+      "Shopify Order ID",
+      "Submitted At",
+      "Customer Name",
+      "Customer Email",
+      "Type",
+      "Status",
+      "Market",
+      "Country",
+      "Requested Resolution",
+      "Final Resolution",
+      "Carrier ID",
+      "Tracking Number",
+      "Tracking URL",
+      "Review Flagged",
+      "Rejection Reason",
+      "Item Details",
+    ];
     const rows = data.requests.map((r: any) => [
+      r.requestNumber || "",
       r.orderNumber || r.shopifyOrderId || "",
-      r.submittedAt ? formatDate(r.submittedAt) : "",
+      r.shopifyOrderId || "",
+      r.submittedAt ? new Date(r.submittedAt).toISOString() : "",
+      r.customerName || "",
       r.customerEmail || "",
       r.type || "",
       r.status || "",
+      r.market || "",
+      r.countryCode || "",
+      r.requestedResolution || "",
+      r.finalResolution || "",
+      r.label?.carrierId || r.carrierId || "",
       r.label?.trackingNumber || "",
+      r.label?.trackingUrl || "",
+      r.reviewFlagged ? "Yes" : "No",
+      r.rejectionReason || "",
+      (r.items || []).map((item: any) => [
+        item.title || "Item",
+        `qty ${item.quantity}`,
+        `returned ${item.returnedQuantity}`,
+        `reason ${item.reason?.labelEn || item.reasonId || ""}`,
+        `comment ${item.comment || ""}`,
+        `resolution ${item.itemResolution || ""}`,
+        `restocked ${item.restocked ? "yes" : "no"}`,
+      ].join("; ")).join(" | "),
     ]);
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      [headers, ...rows]
-        .map((e) => e.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-        .join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvCell = (value: unknown) => {
+      let cell = String(value ?? "");
+      if (/^[=+\-@\t\r]/.test(cell)) cell = `'${cell}`;
+      return `"${cell.replace(/"/g, '""')}"`;
+    };
+    const csvContent = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const file = new Blob(["\uFEFF", csvContent], { type: "text/csv;charset=utf-8" });
+    const downloadUrl = URL.createObjectURL(file);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", downloadUrl);
     link.setAttribute("download", `returns-export-${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
   };
 
   return (
@@ -172,8 +256,11 @@ export default function ReturnsListPage() {
           <div className="returbo-filter-pills">
             {pills.map((pill) => {
               const active = isPillActive(pill.value);
-              const qParam = data.filters.q ? `&q=${encodeURIComponent(data.filters.q)}` : "";
-              const href = pill.value ? `?status=${pill.value}${qParam}` : `?${qParam.slice(1)}`;
+              const params = new URLSearchParams();
+              for (const [key, value] of Object.entries({ ...data.filters, status: pill.value })) {
+                if (value) params.set(key, value);
+              }
+              const href = `?${params.toString()}`;
               return (
                 <Link
                   key={pill.label}
@@ -200,7 +287,7 @@ export default function ReturnsListPage() {
               </svg>
             </button>
 
-            <Form method="get" className="returbo-search-form">
+            <Form method="get" className="returbo-search-filter-form">
               {data.filters.status && <input type="hidden" name="status" value={data.filters.status} />}
               <div className="returbo-search-wrap">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -215,12 +302,12 @@ export default function ReturnsListPage() {
                   className="returbo-search-input"
                 />
               </div>
-            </Form>
 
-            {data.fulfillmentLocations.length > 0 && (
-              <Form method="get" className="returbo-filter-form">
-                {data.filters.status && <input type="hidden" name="status" value={data.filters.status} />}
-                {data.filters.q && <input type="hidden" name="q" value={data.filters.q} />}
+              <div className={`returbo-filter-select-wrap ${data.filters.fulfillmentLocation ? "has-value" : ""}`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
                 <select
                   name="fulfillmentLocation"
                   defaultValue={data.filters.fulfillmentLocation}
@@ -228,12 +315,46 @@ export default function ReturnsListPage() {
                   onChange={(e) => { const form = e.currentTarget.closest('form'); form?.requestSubmit(); }}
                 >
                   <option value="">All fulfillment locations</option>
-                  {data.fulfillmentLocations.map((loc: string) => (
-                    <option key={loc} value={loc}>{loc}</option>
+                  {data.fulfillmentLocations.map((loc: { id: string; label: string }) => (
+                    <option key={loc.id} value={loc.id}>{loc.label}</option>
                   ))}
                 </select>
-              </Form>
-            )}
+                <span className="returbo-filter-select-arrow">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </span>
+              </div>
+
+              <div className={`returbo-filter-select-wrap ${data.filters.carrier ? "has-value" : ""}`}>
+                <select
+                  name="carrier"
+                  aria-label="Filter by carrier"
+                  defaultValue={data.filters.carrier}
+                  className="returbo-filter-select"
+                  onChange={(e) => { const form = e.currentTarget.closest('form'); form?.requestSubmit(); }}
+                >
+                  <option value="">All carriers</option>
+                  {data.carriers.map((carrier: any) => (
+                    <option key={carrier.id} value={carrier.id}>{carrier.name}</option>
+                  ))}
+                </select>
+                <span className="returbo-filter-select-arrow">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </span>
+              </div>
+
+              <div className="returbo-filter-date-wrap">
+                <label htmlFor="returns-date-from">From</label>
+                <input id="returns-date-from" type="date" name="dateFrom" defaultValue={data.filters.dateFrom} aria-label="Submitted from" onChange={(e) => { const form = e.currentTarget.closest('form'); form?.requestSubmit(); }} />
+              </div>
+              <div className="returbo-filter-date-wrap">
+                <label htmlFor="returns-date-to">To</label>
+                <input id="returns-date-to" type="date" name="dateTo" defaultValue={data.filters.dateTo} aria-label="Submitted to" onChange={(e) => { const form = e.currentTarget.closest('form'); form?.requestSubmit(); }} />
+              </div>
+            </Form>
           </div>
         </div>
 
@@ -277,7 +398,7 @@ export default function ReturnsListPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.requests.map((r: any) => (
+                  {paginatedRequests.map((r: any) => (
                     <tr key={r.id}>
                       <td>
                         <Link to={`/app/returns/${r.id}`} className="returbo-order-link">
@@ -320,6 +441,76 @@ export default function ReturnsListPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Controls (10 per page) */}
+            {totalRequests > 0 && (
+              <div className="returbo-table-pagination">
+                <div className="returbo-pagination-info">
+                  Showing <strong>{startIndex + 1}–{endIndex}</strong> of <strong>{totalRequests}</strong> {totalRequests === 1 ? "request" : "requests"}
+                </div>
+
+                <div className="returbo-pagination-controls">
+                  <button
+                    type="button"
+                    className="returbo-pagination-btn"
+                    disabled={currentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    aria-label="Previous page"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    <span>Previous</span>
+                  </button>
+
+                  <div className="returbo-pagination-pages">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => {
+                      if (
+                        totalPages <= 7 ||
+                        pageNum === 1 ||
+                        pageNum === totalPages ||
+                        Math.abs(pageNum - currentPage) <= 1
+                      ) {
+                        const isActive = pageNum === currentPage;
+                        return (
+                          <button
+                            key={pageNum}
+                            type="button"
+                            className={`returbo-pagination-page-btn ${isActive ? "active" : ""}`}
+                            onClick={() => setCurrentPage(pageNum)}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      } else if (
+                        (pageNum === 2 && currentPage > 3) ||
+                        (pageNum === totalPages - 1 && currentPage < totalPages - 2)
+                      ) {
+                        return (
+                          <span key={`ellipsis-${pageNum}`} className="returbo-pagination-ellipsis">
+                            …
+                          </span>
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="returbo-pagination-btn"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    aria-label="Next page"
+                  >
+                    <span>Next</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

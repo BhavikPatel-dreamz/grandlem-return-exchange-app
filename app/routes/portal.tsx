@@ -133,7 +133,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       orderNumber: result.order.name,
       market: result.order.market ?? null,
       customerEmail: result.order.email,
-      customerName: null,
+      customerName: result.order.customerName,
       type: requestType,
       autoApprove: settings.autoApproveRequests,
       items,
@@ -152,7 +152,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     await sendEventEmail(shop, settings.autoApproveRequests ? "approved" : "received", lang, result.order.email || "", {
-      customerName: result.order.email || "customer",
+      customerName: result.order.customerName || result.order.email || "customer",
       orderNumber: result.order.name,
       requestNumber: request.requestNumber,
       items: items.map((it) => it.title).join(", "),

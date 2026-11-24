@@ -266,6 +266,7 @@ model ReturnLabel {
   returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
   carrierId     String?
   connectionId  String?
+  shippyproOrderId String?
   service       String?
   labelUrl      String?
   qrCodeUrl     String?
