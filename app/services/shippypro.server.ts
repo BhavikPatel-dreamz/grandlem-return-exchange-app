@@ -109,7 +109,13 @@ export async function findOriginalShipment(shop: string, orderNumber: string | n
   const result = await shippyproCall("GetShippedOrders", { OrderID: orderNumber }, shop);
   if (!result.ok) return null;
   const list = Array.isArray(result.data?.result) ? result.data.result : result.data?.orders || [];
-  return list?.[0] ?? null;
+  const shipment = list?.[0] ?? null;
+  if (!shipment) return null;
+  return {
+    ...shipment,
+    warehouseCountry: shipment.warehouseCountry || shipment.warehouse_country || shipment.warehouseCountryCode || null,
+    warehouseCity: shipment.warehouseCity || shipment.warehouse_city || null,
+  };
 }
 
 export async function fetchOrderShippingAddress(shop: string, shopifyOrderId: string): Promise<Record<string, string> | null> {
@@ -198,7 +204,7 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
         const originCountry = itemAny.variant?.inventoryItem?.countryCodeOfOrigin?.trim() || warehouse["country"] || "";
         return {
           Description: it.title || "Returned item",
-          Quantity: it.quantity,
+          Quantity: it.returnedQuantity || it.quantity,
           Value: it.priceDifferenceStr || "0",
           OriginCountry: originCountry,
           HSCode: hsCode,

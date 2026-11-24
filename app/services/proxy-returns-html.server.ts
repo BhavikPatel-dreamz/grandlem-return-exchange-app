@@ -6,7 +6,9 @@
 // Liquid delimiters `{` / `}`, so customer input can never be evaluated as
 // Liquid by Shopify.
 
-export type ProxyLang = "en" | "sv";
+import type { ReturnFormCustomization } from "./settings.server";
+
+export type ProxyLang = "en";
 
 export type ProxyContext = {
   /** Shop domain from the signed proxy query string. The only trusted shop value. */
@@ -30,11 +32,10 @@ export function esc(value: unknown): string {
 /** Read the signed proxy context. Call only after `authenticate.public.appProxy` succeeded. */
 export function readProxyContext(request: Request): ProxyContext {
   const params = new URL(request.url).searchParams;
-  const lang = params.get("lang") === "sv" ? "sv" : "en";
   return {
     shop: params.get("shop") ?? "",
     loggedInCustomerId: params.get("logged_in_customer_id") || null,
-    lang,
+    lang: "en",
   };
 }
 
@@ -103,15 +104,8 @@ export function card(inner: string, heading?: string): string {
   return `<section class="glr-card">${heading ? `<h2 class="h4">${esc(heading)}</h2>` : ""}${inner}</section>`;
 }
 
-export function topBar(lang: ProxyLang = "en"): string {
-  const isSv = lang === "sv";
-  const flagSvg = isSv
-    ? `<svg class="glr-flag-svg" width="24" height="16" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="24" height="16" rx="2" fill="#006AA7"/>
-        <rect x="7" width="3" height="16" fill="#FECC00"/>
-        <rect y="6.5" width="24" height="3" fill="#FECC00"/>
-      </svg>`
-    : `<svg class="glr-flag-svg" width="24" height="16" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+export function topBar(): string {
+  const flagSvg = `<svg class="glr-flag-svg" width="24" height="16" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect width="24" height="16" rx="2" fill="#B22234"/>
         <path d="M0 2.46H24M0 4.92H24M0 7.38H24M0 9.85H24M0 12.31H24M0 14.77H24" stroke="white" stroke-width="1.23"/>
         <rect width="9.6" height="8.62" rx="1" fill="#3C3B6E"/>
@@ -126,37 +120,18 @@ export function topBar(lang: ProxyLang = "en"): string {
       </svg>`;
 
   return `<div class="glr-topbar">
-  <div class="glr-locale-dropdown">
-    <button type="button" class="glr-locale-btn" aria-label="Select language" aria-expanded="false" onclick="var m=this.nextElementSibling;if(m){m.classList.toggle('glr-show');}">
-      ${flagSvg}
-      <svg class="glr-caret-svg" width="8" height="5" viewBox="0 0 8 5" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M1 1L4 4L7 1" stroke="#6B7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-    <div class="glr-locale-menu">
-      <a href="?lang=en" class="glr-locale-item ${!isSv ? "glr-active" : ""}">
-        <svg width="18" height="12" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="border-radius:1px;">
-          <rect width="24" height="16" fill="#B22234"/><path d="M0 2.46H24M0 4.92H24M0 7.38H24M0 9.85H24M0 12.31H24M0 14.77H24" stroke="white" stroke-width="1.23"/><rect width="9.6" height="8.62" fill="#3C3B6E"/>
-        </svg>
-        <span>English</span>
-      </a>
-      <a href="?lang=sv" class="glr-locale-item ${isSv ? "glr-active" : ""}">
-        <svg width="18" height="12" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="border-radius:1px;">
-          <rect width="24" height="16" fill="#006AA7"/><rect x="7" width="3" height="16" fill="#FECC00"/><rect y="6.5" width="24" height="3" fill="#FECC00"/>
-        </svg>
-        <span>Svenska</span>
-      </a>
-    </div>
+  <div class="glr-locale-static">
+    ${flagSvg}
+    <span>English</span>
   </div>
 </div>`;
 }
 
-export function orderFooter(lang: ProxyLang = "en"): string {
-  const isSv = lang === "sv";
+export function orderFooter(): string {
   return `<div class="glr-footer">
-  <a href="#" class="glr-footer-link" onclick="return false;">${isSv ? "Returpolicy" : "Return policy"}</a>
+  <a href="#" class="glr-footer-link" onclick="return false;">Return policy</a>
   <span class="glr-dot">•</span>
-  <a href="#" class="glr-footer-link" onclick="return false;">${isSv ? "Hjälp?" : "Help?"}</a>
+  <a href="#" class="glr-footer-link" onclick="return false;">Help?</a>
 </div>`;
 }
 
@@ -230,7 +205,7 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-field-input { width: 100%; height: 48px; padding: 0 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 15px; color: #111827; box-sizing: border-box; outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease; font-family: inherit; -webkit-appearance: none; appearance: none; box-shadow: none; }
 .glr-field-input::placeholder { color: #9ca3af; opacity: 1; }
 .glr-field-input:not(:placeholder-shown), .glr-field-input:-webkit-autofill { background-color: #eef4fc; }
-.glr-field-input:focus { border-color: #de4066; box-shadow: 0 0 0 1px #de4066; background-color: #eef4fc; }
+.glr-field-input:focus { border-color: var(--glr-primary, #de4066); box-shadow: 0 0 0 1px var(--glr-primary, #de4066); background-color: #eef4fc; }
 
 /* Submit button */
 .glr-button-wrap { margin-top: 24px; }
@@ -238,22 +213,21 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-submit-button:hover { background: #e5e7eb; color: #374151; }
 .glr-submit-button:active { background: #d1d5db; }
 
-/* Pink active state when all fields are filled */
+/* Active state when all fields are filled */
 .glr-submit-button.glr-btn-active,
 .glr-order-card form:has(#glr-orderNumber:not(:placeholder-shown)):has(#glr-email:not(:placeholder-shown)) .glr-submit-button {
-  background: #de4066;
-  color: #ffffff;
-  box-shadow: 0 4px 14px 0 rgba(222, 64, 102, 0.35);
+  background: var(--glr-primary, #de4066);
+  color: var(--glr-btn-text, #ffffff);
+  box-shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.15);
 }
 .glr-submit-button.glr-btn-active:hover,
 .glr-order-card form:has(#glr-orderNumber:not(:placeholder-shown)):has(#glr-email:not(:placeholder-shown)) .glr-submit-button:hover {
-  background: #c93256;
-  color: #ffffff;
-  box-shadow: 0 6px 18px 0 rgba(222, 64, 102, 0.4);
+  filter: brightness(0.92);
+  color: var(--glr-btn-text, #ffffff);
 }
 .glr-submit-button.glr-btn-active:active,
 .glr-order-card form:has(#glr-orderNumber:not(:placeholder-shown)):has(#glr-email:not(:placeholder-shown)) .glr-submit-button:active {
-  background: #b52749;
+  filter: brightness(0.85);
   transform: scale(0.99);
 }
 
@@ -282,43 +256,46 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 
 /* Type Select Screen (Order Found) */
 .glr-type-select-page { max-width: 580px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.glr-brand-header { display: flex; align-items: center; gap: 12px; margin-bottom: 1.25rem; }
+.glr-brand-logo { max-height: 48px; max-width: 160px; object-fit: contain; }
+.glr-brand-name { font-size: 18px; font-weight: 700; color: var(--glr-primary-text, #0f172a); }
 .glr-header-left { margin-bottom: 1.25rem; text-align: left; }
-.glr-title-left { font-size: 28px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0; letter-spacing: -0.02em; text-align: left; font-family: inherit; }
+.glr-title-left { font-size: 28px; font-weight: 800; color: var(--glr-primary-text, #0f172a); margin: 0 0 6px 0; letter-spacing: -0.02em; text-align: left; font-family: inherit; }
 .glr-lead-left { font-size: 14px; color: #64748b; margin: 0; line-height: 1.4; text-align: left; opacity: 1; }
 .glr-order-found-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px 22px 24px 22px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
-.glr-card-heading { font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 14px 0; font-family: inherit; }
+.glr-card-heading { font-size: 16px; font-weight: 600; color: var(--glr-primary-text, #0f172a); margin: 0 0 14px 0; font-family: inherit; }
 .glr-order-meta-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 24px; margin-bottom: 16px; font-size: 13px; line-height: 1.4; }
 .glr-meta-item { display: flex; align-items: center; gap: 8px; }
 .glr-meta-label { color: #64748b; font-weight: 500; }
-.glr-meta-value { color: #0f172a; font-weight: 700; }
+.glr-meta-value { color: var(--glr-primary-text, #0f172a); font-weight: 700; }
 .glr-product-card { display: flex; align-items: center; gap: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; background: #ffffff; }
-.glr-product-select { width: 18px; height: 18px; margin: 0; accent-color: #de4066; flex-shrink: 0; cursor: pointer; }
+.glr-product-select { width: 18px; height: 18px; margin: 0; accent-color: var(--glr-primary, #de4066); flex-shrink: 0; cursor: pointer; }
 .glr-product-thumb-wrap { width: 52px; height: 52px; border-radius: 6px; overflow: hidden; background: #f1f5f9; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .glr-product-details { display: flex; flex-direction: column; gap: 2px; flex: 1; }
-.glr-product-name { font-size: 13px; font-weight: 600; color: #0f172a; }
+.glr-product-name { font-size: 13px; font-weight: 600; color: var(--glr-primary-text, #0f172a); }
 .glr-product-quantity { font-size: 12px; color: #64748b; }
-.glr-product-cost { font-size: 13px; font-weight: 700; color: #0f172a; }
-.glr-deadline-banner { background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 8px 12px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; color: #de4066; font-size: 12.5px; font-weight: 500; }
-.glr-type-select-heading { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
+.glr-product-cost { font-size: 13px; font-weight: 700; color: var(--glr-primary-text, #0f172a); }
+.glr-deadline-banner { background: var(--glr-secondary-bg, #fff1f2); border: 1px solid #fecdd3; border-radius: 8px; padding: 8px 12px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; color: var(--glr-primary, #de4066); font-size: 12.5px; font-weight: 500; }
+.glr-type-select-heading { font-size: 14px; font-weight: 700; color: var(--glr-primary-text, #0f172a); margin-bottom: 10px; }
 .glr-type-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
 @media (max-width: 580px) {
   .glr-type-cards { grid-template-columns: 1fr; }
 }
 .glr-type-card { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 14px; border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; cursor: pointer; transition: all 0.15s ease; user-select: none; position: relative; text-align: left; box-sizing: border-box; }
 .glr-type-card:hover { border-color: #cbd5e1; background: #fbfcfd; }
-.glr-type-card.glr-type-card--selected, .glr-type-card:has(input[type="radio"]:checked) { border-color: #f43f5e; background: #fff1f2; }
+.glr-type-card.glr-type-card--selected, .glr-type-card:has(input[type="radio"]:checked) { border-color: var(--glr-primary, #f43f5e); background: var(--glr-secondary-bg, #fff1f2); }
 .glr-type-card input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; margin: 0; }
 .glr-type-card-header { display: flex; align-items: center; justify-content: space-between; width: 100%; }
 .glr-radio-circle { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #d1d5db; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: border-color 0.15s ease; box-sizing: border-box; }
-.glr-radio-circle::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #de4066; opacity: 0; transition: opacity 0.15s ease; }
-.glr-type-card.glr-type-card--selected .glr-radio-circle, .glr-type-card:has(input[type="radio"]:checked) .glr-radio-circle { border-color: #de4066; }
+.glr-radio-circle::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--glr-primary, #de4066); opacity: 0; transition: opacity 0.15s ease; }
+.glr-type-card.glr-type-card--selected .glr-radio-circle, .glr-type-card:has(input[type="radio"]:checked) .glr-radio-circle { border-color: var(--glr-primary, #de4066); }
 .glr-type-card.glr-type-card--selected .glr-radio-circle::after, .glr-type-card:has(input[type="radio"]:checked) .glr-radio-circle::after { opacity: 1; }
 .glr-type-icon { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; }
 .glr-type-content { display: flex; flex-direction: column; gap: 2px; flex: 1; text-align: left; width: 100%; }
-.glr-type-name { font-size: 13.5px; font-weight: 700; color: #0f172a; }
+.glr-type-name { font-size: 13.5px; font-weight: 700; color: var(--glr-primary-text, #0f172a); }
 .glr-type-desc { font-size: 11.5px; color: #64748b; font-weight: 400; line-height: 1.35; }
 .glr-field-block { margin-bottom: 16px; text-align: left; }
-.glr-form-label { display: block; font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 6px; text-align: left; }
+.glr-form-label { display: block; font-size: 13px; font-weight: 600; color: var(--glr-primary-text, #0f172a); margin-bottom: 6px; text-align: left; }
 .glr-required { color: #e11d48; margin-left: 2px; }
 .glr-select-wrap { position: relative; width: 100%; }
 .glr-custom-select { width: 100%; height: 40px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0 32px 0 12px; font-size: 13px; color: #0f172a; background: #ffffff; cursor: pointer; box-sizing: border-box; outline: none; -webkit-appearance: none; appearance: none; transition: border-color 0.15s ease; font-family: inherit; }
@@ -336,7 +313,7 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-dropzone-subtitle { font-size: 11.5px; color: #64748b; }
 .glr-dropzone-btn { background: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 500; color: #0f172a; cursor: pointer; pointer-events: none; flex-shrink: 0; }
 .glr-submit-row { margin-top: 20px; text-align: left; }
-.glr-submit-request-btn { background: #111827; color: #ffffff; border: none; border-radius: 8px; height: 40px; padding: 0 20px; font-size: 13.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: background-color 0.15s ease; font-family: inherit; -webkit-appearance: none; appearance: none; }
+.glr-submit-request-btn { background: var(--glr-primary, #111827); color: var(--glr-btn-text, #ffffff); border: none; border-radius: 8px; height: 40px; padding: 0 20px; font-size: 13.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: opacity 0.15s ease; font-family: inherit; -webkit-appearance: none; appearance: none; }
 .glr-submit-request-btn:hover { background: #27272a; }
 .glr-submit-request-btn:active { background: #09090b; }
 
@@ -381,28 +358,28 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-refund-banner-amount { font-size: 20px; font-weight: 800; color: #de4066; }
 .glr-refund-disclaimer { font-size: 12.5px; color: #64748b; margin: 8px 0 24px 0; text-align: left; line-height: 1.4; }
 
-.glr-confirm-btn { width: 100%; height: 48px; background: #e52b5a; color: #ffffff; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; box-shadow: 0 4px 12px rgba(229, 43, 90, 0.25); font-family: inherit; -webkit-appearance: none; appearance: none; display: flex; align-items: center; justify-content: center; }
-.glr-confirm-btn:hover { background: #d0204d; }
-.glr-confirm-btn:active { background: #b51a40; transform: scale(0.99); }
+.glr-confirm-btn { width: 100%; height: 48px; background: var(--glr-primary, #e52b5a); color: var(--glr-btn-text, #ffffff); border: none; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); font-family: inherit; -webkit-appearance: none; appearance: none; display: flex; align-items: center; justify-content: center; }
+.glr-confirm-btn:hover { filter: brightness(0.92); }
+.glr-confirm-btn:active { filter: brightness(0.85); transform: scale(0.99); }
 
 .glr-summary-policy-footer { font-size: 13px; color: #64748b; text-align: center; margin-top: 14px; line-height: 1.4; }
-.glr-summary-policy-link { color: #de4066; text-decoration: underline; cursor: pointer; font-weight: 500; }
-.glr-summary-policy-link:hover { color: #b52749; }
+.glr-summary-policy-link { color: var(--glr-primary, #de4066); text-decoration: underline; cursor: pointer; font-weight: 500; }
+.glr-summary-policy-link:hover { filter: brightness(0.85); }
 
 /* Confirmation Screen */
 .glr-conf-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 36px 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); text-align: center; box-sizing: border-box; }
 .glr-conf-icon-wrap { display: flex; justify-content: center; align-items: center; margin-bottom: 20px; }
 .glr-conf-title { font-size: 28px; font-weight: 800; color: #0f172a; margin: 0 0 20px 0; letter-spacing: -0.02em; font-family: inherit; text-align: center; }
-.glr-conf-number-strip { background: #feeff4; border: 1px solid #fce7f3; border-radius: 10px; padding: 12px 20px; max-width: 420px; margin: 0 auto 20px auto; display: flex; align-items: center; justify-content: space-between; }
+.glr-conf-number-strip { background: var(--glr-secondary-bg, #feeff4); border: 1px solid #fce7f3; border-radius: 10px; padding: 12px 20px; max-width: 420px; margin: 0 auto 20px auto; display: flex; align-items: center; justify-content: space-between; }
 .glr-conf-number-left { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: #0f172a; }
 .glr-conf-divider { width: 1px; height: 20px; background: #e2e8f0; margin: 0 12px; }
-.glr-conf-number-value { color: #de4066; font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
+.glr-conf-number-value { color: var(--glr-primary, #de4066); font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
 .glr-conf-next-text { font-size: 14px; line-height: 1.5; color: #0f172a; max-width: 380px; margin: 0 auto 20px auto; text-align: center; }
-.glr-conf-email-banner { background: #feeff4; border: 1px solid #fce7f3; border-radius: 8px; padding: 12px 18px; max-width: 480px; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; font-weight: 500; color: #0f172a; text-align: center; }
-.glr-conf-email-icon { display: flex; align-items: center; justify-content: center; color: #de4066; flex-shrink: 0; }
-.glr-conf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 380px; height: 48px; background: #e52b5a; color: #ffffff; border-radius: 12px; font-size: 15px; font-weight: 700; text-decoration: none; transition: background 0.15s ease, transform 0.15s ease; box-shadow: 0 4px 12px rgba(229, 43, 90, 0.25); font-family: inherit; margin: 0 auto; }
-.glr-conf-btn:hover { background: #d0204d; color: #ffffff; text-decoration: none; }
-.glr-conf-btn:active { background: #b51a40; transform: scale(0.99); }
+.glr-conf-email-banner { background: var(--glr-secondary-bg, #feeff4); border: 1px solid #fce7f3; border-radius: 8px; padding: 12px 18px; max-width: 480px; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; font-weight: 500; color: #0f172a; text-align: center; }
+.glr-conf-email-icon { display: flex; align-items: center; justify-content: center; color: var(--glr-primary, #de4066); flex-shrink: 0; }
+.glr-conf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 380px; height: 48px; background: var(--glr-primary, #e52b5a); color: var(--glr-btn-text, #ffffff); border-radius: 12px; font-size: 15px; font-weight: 700; text-decoration: none; transition: background 0.15s ease, transform 0.15s ease; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); font-family: inherit; margin: 0 auto; }
+.glr-conf-btn:hover { filter: brightness(0.92); color: var(--glr-btn-text, #ffffff); text-decoration: none; }
+.glr-conf-btn:active { filter: brightness(0.85); transform: scale(0.99); }
 </style>`;
 
 /** Wraps a screen in the page container. Shopify adds the theme header/footer. */
@@ -417,13 +394,24 @@ export function page(opts: {
   isOrderPage?: boolean;
   isTypeSelectPage?: boolean;
   isSummaryPage?: boolean;
+  customization?: ReturnFormCustomization;
 }): string {
-  const topbar = opts.showTopbar ? topBar(opts.lang ?? "en") : "";
-  const footer = opts.showFooter ? orderFooter(opts.lang ?? "en") : "";
+  const topbar = opts.showTopbar ? topBar() : "";
+  const footer = opts.showFooter ? orderFooter() : "";
   const eyebrow = opts.eyebrow ? `<div class="glr-eyebrow">${esc(opts.eyebrow)}</div>` : "";
+  const customStyles = opts.customization
+    ? `<style>
+:root {
+  --glr-primary: ${esc(opts.customization.primaryColor)};
+  --glr-primary-text: ${esc(opts.customization.primaryTextColor)};
+  --glr-btn-text: ${esc(opts.customization.textColor)};
+  --glr-secondary-bg: ${esc(opts.customization.secondaryBgColor)};
+}
+</style>`
+    : "";
 
   if (opts.isSummaryPage) {
-    return `${STYLES}
+    return `${STYLES}${customStyles}
 <div class="page-width glr glr-summary-page">
   <div class="glr-stack">
     ${opts.body}
@@ -432,7 +420,7 @@ export function page(opts: {
   }
 
   if (opts.isOrderPage) {
-    return `${STYLES}
+    return `${STYLES}${customStyles}
 <div class="page-width glr glr-order-page">
   ${topbar}
   <div class="glr-header-center">
@@ -448,8 +436,16 @@ export function page(opts: {
   }
 
   if (opts.isTypeSelectPage) {
-    return `${STYLES}
+    const brandHeader = opts.customization && (opts.customization.showLogo || opts.customization.showStoreName)
+      ? `<div class="glr-brand-header">
+          ${opts.customization.showLogo && opts.customization.logoUrl ? `<img src="${esc(opts.customization.logoUrl)}" alt="Store Logo" class="glr-brand-logo">` : ""}
+          ${opts.customization.showStoreName ? `<span class="glr-brand-name">${esc(opts.customization.storeName || "Grand Le Mar")}</span>` : ""}
+        </div>`
+      : "";
+
+    return `${STYLES}${customStyles}
 <div class="page-width glr glr-type-select-page">
+  ${brandHeader}
   <div class="glr-header-left">
     <h1 class="glr-title-left">${esc(opts.title)}</h1>
     ${opts.lead ? `<p class="glr-lead-left">${esc(opts.lead)}</p>` : ""}
@@ -460,7 +456,7 @@ export function page(opts: {
 </div>`;
   }
 
-  return `${STYLES}
+  return `${STYLES}${customStyles}
 <div class="page-width glr">
   ${topbar}
   ${eyebrow}

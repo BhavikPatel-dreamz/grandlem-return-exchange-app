@@ -14,8 +14,6 @@ export async function getDeadlineDays(shop: string, type: RequestType): Promise<
   switch (type) {
     case "exchange":
       return settings.exchangeDeadlineDays;
-    case "complaint":
-      return settings.complaintDeadlineDays;
     default:
       return settings.returnDeadlineDays;
   }

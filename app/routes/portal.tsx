@@ -18,7 +18,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   return {
     shop: url.searchParams.get("shop") || "",
-    lang: (url.searchParams.get("lang") as "en" | "sv") || "en",
+    lang: "en" as const,
   };
 };
 
@@ -32,18 +32,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = String(formData.get("shop") || "").trim();
   const orderNumber = String(formData.get("orderNumber") || "").trim();
   const email = String(formData.get("email") || "").trim();
-  const lang = (String(formData.get("lang") || "en") as "en" | "sv");
+  const lang = "en" as const;
   const requestType = (String(formData.get("requestType") || "return") as "return" | "exchange" | "complaint");
 
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   if (!checkRateLimit(`${ip}:${shop}`)) {
-    return { ok: false, code: "RATE_LIMITED", message: portalErrorCodeToMessage("RATE_LIMITED", lang), lang } as const;
+    return { ok: false, code: "RATE_LIMITED", message: portalErrorCodeToMessage("RATE_LIMITED"), lang } as const;
   }
 
   if (formData.get("_action") === "create_request") {
     const result = await lookupAndValidateOrder(shop, orderNumber, email, requestType);
     if (!result.ok) {
-      return { ...result, message: portalErrorCodeToMessage(result.code, lang), lang } as const;
+      return { ...result, message: portalErrorCodeToMessage(result.code), lang } as const;
     }
 
     const settings = await getOrCreateSettings(shop);
@@ -172,16 +172,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const result = await lookupAndValidateOrder(shop, orderNumber, email, requestType);
   if (!result.ok) {
-    return { ...result, message: portalErrorCodeToMessage(result.code, lang), lang } as const;
+    return { ...result, message: portalErrorCodeToMessage(result.code), lang } as const;
   }
-  return { ...result, message: portalErrorCodeToMessage("ORDER_NOT_FOUND", lang) === "" ? "" : "Order validated.", lang } as const;
+  return { ...result, message: portalErrorCodeToMessage("ORDER_NOT_FOUND") === "" ? "" : "Order validated.", lang } as const;
 };
 
 export default function PortalPage() {
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
 
-  const lang = (actionData && "lang" in actionData ? actionData.lang : loaderData.lang) as "en" | "sv";
+  const lang = "en" as const;
   const hasOrder = !!actionData && "ok" in actionData && actionData.ok === true && !("created" in actionData);
   const created = !!actionData && "created" in actionData && actionData.created === true;
 
@@ -248,7 +248,7 @@ export default function PortalPage() {
                         <s-option value="">Select reason</s-option>
                         {reasons.map((r: any) => (
                           <s-option key={r.id} value={r.id}>
-                            {r.labelEn}
+                            {r.parentLabel ? `${r.parentLabel} / ${r.labelEn}` : r.labelEn}
                           </s-option>
                         ))}
                       </s-select>

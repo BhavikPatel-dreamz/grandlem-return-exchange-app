@@ -74,7 +74,6 @@ export default function DashboardPage() {
             <li>Online Store › Navigation: add a “Returns” link to <code>/apps/returns</code> in the footer menu.</li>
             <li>Settings › Notifications: add the link to the shipping confirmation and order status emails.</li>
             <li>App emails: use <code>{"{{returnsUrl}}"}</code> in templates under Settings › Email templates.</li>
-            <li>Swedish page: add <code>?lang=sv</code> to the address.</li>
           </ul>
         </div>
       </main>

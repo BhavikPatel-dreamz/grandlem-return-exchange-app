@@ -3,7 +3,6 @@ import prisma from "../db.server";
 export type SettingsInput = {
   returnDeadlineDays?: number;
   exchangeDeadlineDays?: number;
-  complaintDeadlineDays?: number;
   autoApproveRequests?: boolean;
   emailFrom?: string;
   autoRefundOnInspection?: boolean;
@@ -39,7 +38,6 @@ export async function updateSettings(shop: string, input: SettingsInput) {
   const data: Record<string, unknown> = {};
   if (input.returnDeadlineDays !== undefined) data.returnDeadlineDays = input.returnDeadlineDays;
   if (input.exchangeDeadlineDays !== undefined) data.exchangeDeadlineDays = input.exchangeDeadlineDays;
-  if (input.complaintDeadlineDays !== undefined) data.complaintDeadlineDays = input.complaintDeadlineDays;
   if (input.autoApproveRequests !== undefined) data.autoApproveRequests = input.autoApproveRequests;
   if (input.emailFrom !== undefined) data.emailFrom = input.emailFrom;
   if (input.autoRefundOnInspection !== undefined) data.autoRefundOnInspection = input.autoRefundOnInspection;
@@ -120,6 +118,63 @@ export async function updateReturnImageCommentConfig(shop: string, config: Retur
   const current = await getOrCreateSettings(shop);
   const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
   timings["__return_image_comment"] = JSON.stringify(config);
+  return updateSettings(shop, {
+    labelTimingPerMarket: timings as Record<string, "immediate" | "after_approval">,
+  });
+}
+
+export type ReturnFormCustomization = {
+  primaryColor: string;
+  primaryTextColor: string;
+  textColor: string;
+  secondaryBgColor: string;
+  showLogo: boolean;
+  showStoreName: boolean;
+  logoUrl?: string;
+  storeName?: string;
+};
+
+export const DEFAULT_RETURN_FORM_CUSTOMIZATION: ReturnFormCustomization = {
+  primaryColor: "#de4066",
+  primaryTextColor: "#121212",
+  textColor: "#ffffff",
+  secondaryBgColor: "#fff7f8",
+  showLogo: true,
+  showStoreName: true,
+  logoUrl: "",
+  storeName: "Grand Le Mar",
+};
+
+export function getReturnFormCustomization(settings?: { labelTimingPerMarket?: string | null } | null): ReturnFormCustomization {
+  const timings = parseJson<Record<string, string>>(settings?.labelTimingPerMarket, {});
+  const raw = timings["__form_customization"];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        primaryColor: typeof parsed.primaryColor === "string" && parsed.primaryColor ? parsed.primaryColor : DEFAULT_RETURN_FORM_CUSTOMIZATION.primaryColor,
+        primaryTextColor: typeof parsed.primaryTextColor === "string" && parsed.primaryTextColor ? parsed.primaryTextColor : DEFAULT_RETURN_FORM_CUSTOMIZATION.primaryTextColor,
+        textColor: typeof parsed.textColor === "string" && parsed.textColor ? parsed.textColor : DEFAULT_RETURN_FORM_CUSTOMIZATION.textColor,
+        secondaryBgColor: typeof parsed.secondaryBgColor === "string" && parsed.secondaryBgColor ? parsed.secondaryBgColor : DEFAULT_RETURN_FORM_CUSTOMIZATION.secondaryBgColor,
+        showLogo: Boolean(parsed.showLogo),
+        showStoreName: Boolean(parsed.showStoreName),
+        logoUrl: typeof parsed.logoUrl === "string" ? parsed.logoUrl : "",
+        storeName: typeof parsed.storeName === "string" ? parsed.storeName : "",
+      };
+    } catch {}
+  }
+  return { ...DEFAULT_RETURN_FORM_CUSTOMIZATION };
+}
+
+export async function updateReturnFormCustomization(shop: string, config: Partial<ReturnFormCustomization>) {
+  const current = await getOrCreateSettings(shop);
+  const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
+  const existing = getReturnFormCustomization(current);
+  const updated: ReturnFormCustomization = {
+    ...existing,
+    ...config,
+  };
+  timings["__form_customization"] = JSON.stringify(updated);
   return updateSettings(shop, {
     labelTimingPerMarket: timings as Record<string, "immediate" | "after_approval">,
   });

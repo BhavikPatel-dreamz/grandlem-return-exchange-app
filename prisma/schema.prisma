@@ -38,7 +38,6 @@ model ReturnReason {
   id        String   @id @default(cuid())
   shop      String
   labelEn   String
-  labelSv   String   @default("")
   // return | exchange | complaint | any (comma list) - simplified as string
   appliesTo String   @default("return,exchange,complaint")
   autoRestock Boolean @default(false)

@@ -39,6 +39,7 @@ import {
 import {
   getLabelTimingForMarket,
   getOrCreateSettings,
+  getReturnFormCustomization,
   getReturnImageCommentConfig,
 } from "../services/settings.server";
 import { getEffectiveDeadline, isExpired } from "../services/validation.server";
@@ -174,115 +175,6 @@ changeType: "Change request type",
     complaintKeepItem: "You don’t need to send the item back. We’ll email you once we’ve reviewed it.",
     startAnother: "Start another request",
   },
-  sv: {
-    eyebrow: "RETURER & BYTEN",
-    title: "Returer & byten",
-    lead: "Starta en retur, ett byte eller en reklamation för en order.",
-    guestHeading: "Låt oss hitta din order",
-    guestIntro: "Ange ditt ordernummer och e-postadressen eller telefonnumret från köpet, så hämtar vi resten.",
-    loggedIn: "Välj ordern du vill returnera eller byta.",
-    yourOrders: "Dina ordrar",
-    noOrders: "Vi hittade inga ordrar på ditt konto. Du kan fortfarande söka upp en order nedan.",
-    ordersUnavailable: "Vi kunde inte hämta dina ordrar just nu. Du kan söka upp en order nedan.",
-    otherOrder: "Saknas ordern?",
-    status: {
-      FULFILLED: "Levererad",
-      PARTIALLY_FULFILLED: "Delvis levererad",
-      IN_PROGRESS: "Pågår",
-      UNFULFILLED: "Ej levererad",
-      ON_HOLD: "Pausad",
-      SCHEDULED: "Schemalagd",
-    } as Record<string, string>,
-    requestType: "Vad vill du göra med denna order?",
-    types: { return: "Retur", exchange: "Byte", complaint: "Reklamation" },
-    typeDescriptions: {
-      return: "Skicka tillbaka artiklar för återbetalning.",
-      exchange: "Byt till en annan storlek, färg eller artikel.",
-      complaint: "Rapportera ett problem med denna order.",
-    },
-    orderNumber: "Ordernummer",
-    email: "E-post/Telefonnummer",
-    orderNumberPlaceholder: "# 000001",
-    emailPlaceholder: "example@mail.com",
-    findOrder: "Hitta min order",
-    returnPolicy: "Returpolicy",
-    help: "Hjälp?",
-    next: "Nästa",
-    submitRequest: "Skicka ärende",
-    dragAndDrop: "Välj filer eller dra och släpp",
-    chooseFilesBtn: "Välj filer",
-    backToDetails: "Tillbaka till detaljer",
-    returnSummaryTitle: "Din retursammanfattning",
-    exchangeSummaryTitle: "Din bytessammanfattning",
-    complaintSummaryTitle: "Din reklamationssammanfattning",
-    itemsReturning: "Artiklar du returnerar",
-    itemsExchanging: "Artiklar du byter",
-    itemsReporting: "Artiklar du reklamerar",
-    itemsCount: (n: number) => `${n} artikel/artiklar`,
-    requestDetailsHeading: "Ärendeuppgifter",
-    requestTypeLabel: "Typ av begäran",
-    reasonLabel: "Orsak",
-    commentLabel: "Kommentar",
-    uploadedPhotosLabel: "Uppladdade foton",
-    estimatedRefund: "Beräknad återbetalning",
-    refundDisclaimer: "* Det slutliga återbetalningsbeloppet kan justeras för eventuella avdrag, fraktkostnader och butikens policy.",
-    confirmReturnRequest: "Bekräfta returförfrågan",
-    confirmExchangeRequest: "Bekräfta bytesförfrågan",
-    confirmComplaintRequest: "Bekräfta reklamation",
-    agreePolicy: (shop: string) => `Genom att bekräfta godkänner du ${shop}s `,
-    notFound: "Ordernumret och/eller e-postadressen verkar inte stämma med våra uppgifter. Kontrollera uppgifterna och försök igen.",
-    unknownStage: "Något gick fel. Börja om.",
-    verifiedHeading: "Order hittad",
-    order: "Order",
-    request: "Ärende",
-    deadline: "Sista dag",
-    purchaseDate: "Köpsdatum",
-    deadlineDependsOnType: "Beror på ärendetyp",
-    items: "Artiklar",
-    notEligible: "kan inte väljas",
-    noEligibleItems: "Inga kvalificerade artiklar.",
-changeType: "Byt ärendetyp",
-     resolutionLegend: "Hur vill du att ärendet ska lösas?",
-     resolutionFixed: "Ärendet kommer att lösas med:",
-     edit: "Redigera",
-    resolutions: {
-      refund: "Återbetalning till ursprungligt betalsätt",
-      store_credit: "Tillgodohavande",
-      exchange: "Byte till annan storlek eller artikel",
-      replacement: "Ersättningsartikel",
-    } as Record<Resolution, string>,
-    bonus: (n: number) => `+${n}% bonus`,
-    refundDeflected: "Återbetalning för detta ärende sker som tillgodohavande.",
-    chooseItems: "Vilka artiklar?",
-    quantity: "Antal",
-    reason: "Orsak",
-    chooseReason: "Välj en orsak",
-    comment: "Kommentar",
-    commentMin: (n: number) => `Beskriv problemet (minst ${n} tecken).`,
-    photos: "Bilder",
-    photosHint: "Endast bilder, högst 5 MB per bild.",
-    photosMin: (n: number) => `Lägg till minst ${n} bild(er).`,
-    submit: "Skicka ärende",
-    sessionExpired: "Din session har gått ut. Sök upp din order igen.",
-    pickResolution: "Välj hur du vill att ärendet ska lösas.",
-    pickItem: "Välj minst en artikel.",
-    badQuantity: (title: string) => `Välj ett giltigt antal för ${title}.`,
-    pickReason: (title: string) => `Välj en orsak för ${title}.`,
-    commentTooLong: `Kommentarer får vara högst ${MAX_COMMENT_LENGTH} tecken.`,
-    imagesOnly: "Endast bildfiler är tillåtna.",
-    photoTooBig: "Varje bild får vara högst 5 MB.",
-    needPhotos: (n: number, title: string) => `Lägg till minst ${n} bild(er) för ${title}.`,
-    needComment: (n: number, title: string) => `Kommentaren för ${title} måste vara minst ${n} tecken.`,
-    submitFailed: "Vi kunde inte skicka ditt ärende. Försök igen.",
-    confirmedHeading: "Ärendet är mottaget",
-    requestNumber: "Ärendenummer",
-    confirmedEmail: "Vi har skickat en bekräftelse till e-postadressen på ordern.",
-    nextReturn: "Vi granskar ditt ärende och mejlar returinstruktioner.",
-    nextExchange: "Vi granskar ditt ärende och mejlar nästa steg för ditt byte.",
-    complaintReturnItem: "Behåll artikeln: du behöver skicka tillbaka den. Vi mejlar instruktioner.",
-    complaintKeepItem: "Du behöver inte skicka tillbaka artikeln. Vi mejlar när vi har granskat ärendet.",
-    startAnother: "Starta ett nytt ärende",
-  },
 } as const;
 
 function parseRequestType(value: FormDataEntryValue | null): ProxyRequestType | null {
@@ -376,7 +268,7 @@ function customerOrdersCard(
     .map(
       (o) => `<li><button type="submit" name="orderId" value="${esc(o.id)}" class="button button--secondary glr-order">
   <span class="glr-order__name">${esc(o.name)}</span>
-  <span class="glr-muted">${esc(formatDate(o.createdAt, ctx.lang))}</span>
+  <span class="glr-muted">${esc(formatDate(o.createdAt))}</span>
   <span class="glr-muted">${esc(statusLabel(ctx, o.fulfillmentStatus))}</span>
 </button></li>`,
     )
@@ -390,6 +282,8 @@ async function startScreen(
   opts: { error?: string; values?: LookupValues } = {},
 ): Promise<string> {
   const t = COPY[ctx.lang];
+  const settings = await getOrCreateSettings(ctx.shop);
+  const customization = getReturnFormCustomization(settings);
   let body: string;
 
   if (ctx.loggedInCustomerId) {
@@ -415,6 +309,7 @@ async function startScreen(
         showFooter: true,
         lang: ctx.lang,
         isOrderPage: true,
+        customization,
       });
     } else {
       body =
@@ -434,12 +329,13 @@ async function startScreen(
     showFooter: true,
     lang: ctx.lang,
     isOrderPage: true,
+    customization,
   });
 }
 
-function formatDate(iso: string, lang: ProxyLang): string {
+function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleDateString(lang === "sv" ? "sv-SE" : "en-GB", {
+    return new Date(iso).toLocaleDateString("en-GB", {
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -453,7 +349,7 @@ function formatDate(iso: string, lang: ProxyLang): string {
 // Step 5: request details (resolution, items, reasons, photos)
 // ---------------------------------------------------------------------------
 
-type ReasonOption = { id: string; label: string };
+type ReasonOption = { id: string; label: string; parentLabel?: string };
 
 type DetailsModel = {
   settings: Awaited<ReturnType<typeof getOrCreateSettings>>;
@@ -499,7 +395,7 @@ async function loadDetailsModel(ctx: ProxyContext, result: PortalOrderResult): P
   const choices = resolutionChoices(settings, result.requestType, exchangeOpen);
   const reasons = (result.reasons || [])
     .filter((r) => reasonApplies(r.appliesTo, result.requestType))
-    .map((r) => ({ id: r.id, label: ctx.lang === "sv" && r.labelSv ? r.labelSv : r.labelEn }));
+    .map((r) => ({ id: r.id, label: r.labelEn, parentLabel: r.parentLabel }));
   return { settings, choices, reasons };
 }
 
@@ -938,6 +834,7 @@ function detailsScreen(
     body,
     isSummaryPage: true,
     lang: ctx.lang,
+    customization: getReturnFormCustomization(model.settings),
   });
 }
 
@@ -965,6 +862,7 @@ function confirmationScreen(
   requestType: ProxyRequestType,
   requireItemReturn: boolean,
   labelUrl?: string | null,
+  settings?: { labelTimingPerMarket?: string | null },
 ): string {
   const t = COPY[ctx.lang];
   const next =
@@ -1034,6 +932,7 @@ function confirmationScreen(
     body: cardHtml,
     isTypeSelectPage: true,
     lang: ctx.lang,
+    customization: getReturnFormCustomization(settings),
   });
 }
 
@@ -1047,7 +946,7 @@ async function handleGuestLookup(request: Request, ctx: ProxyContext, formData: 
   const values: LookupValues = { orderNumber, email };
 
   if (!orderNumber || !email) {
-    return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values });
+    return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT"), values });
   }
 
   // Two buckets: per client IP + shop, and per shop + order number so a single
@@ -1057,7 +956,7 @@ async function handleGuestLookup(request: Request, ctx: ProxyContext, formData: 
     !checkRateLimit(`proxy:${clientIp(request)}:${ctx.shop}`) ||
     !checkRateLimit(`proxy-order:${ctx.shop}:${normalizedOrder}`)
   ) {
-    return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values });
+    return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED"), values });
   }
 
   // Basic validation: check order exists, email matches, order is fulfilled
@@ -1074,7 +973,7 @@ async function handleGuestLookup(request: Request, ctx: ProxyContext, formData: 
 function lookupErrorMessage(ctx: ProxyContext, code: string): string {
   return code === "ORDER_NOT_FOUND" || code === "EMAIL_MISMATCH" || code === "SHOP_REQUIRED"
     ? COPY[ctx.lang].notFound
-    : portalErrorCodeToMessage(code as Parameters<typeof portalErrorCodeToMessage>[0], ctx.lang);
+    : portalErrorCodeToMessage(code as Parameters<typeof portalErrorCodeToMessage>[0]);
 }
 
 function orderFoundScreen(
@@ -1088,7 +987,7 @@ function orderFoundScreen(
   const t = COPY[ctx.lang];
 
   // 1. Order meta strip
-  const deadlineDate = formatDate(result.deadline, ctx.lang);
+  const deadlineDate = formatDate(result.deadline);
   const summary = `<div class="glr-order-meta-strip">
   <div class="glr-meta-item">
     <span class="glr-meta-label">${esc(t.order)}</span>
@@ -1096,7 +995,7 @@ function orderFoundScreen(
   </div>
   <div class="glr-meta-item">
     <span class="glr-meta-label">${esc(t.purchaseDate ?? "Purchase date")}</span>
-    <strong class="glr-meta-value">${esc(formatDate(order.createdAt, ctx.lang))}</strong>
+    <strong class="glr-meta-value">${esc(formatDate(order.createdAt))}</strong>
   </div>
   <div class="glr-meta-item">
     <span class="glr-meta-label">${esc(t.deadline)}</span>
@@ -1137,9 +1036,7 @@ function orderFoundScreen(
   const deadlineTime = new Date(result.deadline).getTime();
   const deadlineFormatted = deadlineDate;
   const daysLeft = Math.max(0, Math.ceil((deadlineTime - Date.now()) / (24 * 60 * 60 * 1000)));
-  const deadlineNoticeText = ctx.lang === "sv"
-    ? `Du har till <strong>${esc(deadlineFormatted)}</strong> på dig att begära retur eller byte (${daysLeft} dagar).`
-    : `You have until <strong>${esc(deadlineFormatted)}</strong> to request a return or exchange (${daysLeft} days).`;
+  const deadlineNoticeText = `You have until <strong>${esc(deadlineFormatted)}</strong> to request a return or exchange (${daysLeft} days).`;
 
   const deadlineBanner = `<div class="glr-deadline-banner">
   <svg class="glr-clock-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#de4066" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
@@ -1211,7 +1108,7 @@ function orderFoundScreen(
     });
     if (reasons.length === 0) return "";
     const reasonOptions = reasons
-      .map((r) => `<option value="${esc(r.id)}">${esc(ctx.lang === "sv" && r.labelSv ? r.labelSv : r.labelEn)}</option>`)
+      .map((r) => `<option value="${esc(r.id)}">${esc(r.parentLabel ? `${r.parentLabel} / ${r.labelEn}` : r.labelEn)}</option>`)
       .join("");
     const reasonItems = order.lineItems
       .filter((li) => !li.excluded)
@@ -1469,6 +1366,7 @@ ${clientScript}`,
     body: errorBox(opts.error) + `<section class="glr-order-found-card"><h2 class="glr-card-heading">${esc(t.verifiedHeading ?? "Order found")}</h2>${inner}</section>`,
     isTypeSelectPage: true,
     lang: ctx.lang,
+    customization: getReturnFormCustomization(settings),
   });
 }
 
@@ -1482,11 +1380,11 @@ async function handleSelectOrder(request: Request, ctx: ProxyContext, formData: 
   // Untrusted: only used as a lookup key. Ownership is checked against the signed customer id.
   const orderId = String(formData.get("orderId") || "").trim();
   if (!orderId) {
-    return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values });
+    return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT"), values });
   }
 
   if (!checkRateLimit(`proxy-customer:${ctx.shop}:${customerId}`)) {
-    return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values });
+    return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED"), values });
   }
 
   // Basic validation for logged-in customer (checks ownership, fulfillment)
@@ -1638,7 +1536,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
     });
   }
 
-  return confirmationScreen(ctx, created.requestNumber ?? "", token.requestType, settings.complaintRequireItemReturn, labelUrl);
+  return confirmationScreen(ctx, created.requestNumber ?? "", token.requestType, settings.complaintRequireItemReturn, labelUrl, settings);
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -1656,11 +1554,11 @@ async function handleSelectRequestType(request: Request, ctx: ProxyContext, form
     const orderId = String(formData.get("orderId") || "").trim();
     const back: LookupValues = {};
     if (!orderId || !requestType) {
-      return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values: back });
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT"), values: back });
     }
 
     if (!checkRateLimit(`proxy-customer:${ctx.shop}:${ctx.loggedInCustomerId}`)) {
-      return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values: back });
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED"), values: back });
     }
 
     const result = await lookupOrderForCustomer(ctx.shop, orderId, ctx.loggedInCustomerId, requestType);
@@ -1683,7 +1581,7 @@ async function handleSelectRequestType(request: Request, ctx: ProxyContext, form
     const back: LookupValues = { orderNumber, email };
 
     if (!orderNumber || !email || !requestType) {
-      return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT", ctx.lang), values: back });
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("INVALID_INPUT"), values: back });
     }
 
     // Rate limiting
@@ -1692,7 +1590,7 @@ async function handleSelectRequestType(request: Request, ctx: ProxyContext, form
       !checkRateLimit(`proxy:${clientIp(request)}:${ctx.shop}`) ||
       !checkRateLimit(`proxy-order:${ctx.shop}:${normalizedOrder}`)
     ) {
-      return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED", ctx.lang), values: back });
+      return await startScreen(ctx, { error: portalErrorCodeToMessage("RATE_LIMITED"), values: back });
     }
 
     // Full validation with the selected requestType
@@ -1717,7 +1615,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const signed = readProxyContext(request);
   const formData = await request.formData();
   // Posted `shop` is a display hint only and is deliberately ignored.
-  const lang: ProxyLang = formData.get("lang") === "sv" ? "sv" : signed.lang;
+  const lang: ProxyLang = "en";
   const ctx: ProxyContext = { ...signed, lang };
   const stage = String(formData.get("_stage") || "");
 

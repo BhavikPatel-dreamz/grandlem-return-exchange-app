@@ -1,20 +1,44 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useRef, useState, useEffect } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import { Form, useActionData, useFetcher, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
 import { sendEmail, renderTemplate } from "../services/email.server";
-import { getOrCreateSettings, updateSettings } from "../services/settings.server";
+import {
+  getOrCreateSettings,
+  updateSettings,
+  getReturnFormCustomization,
+  updateReturnFormCustomization,
+} from "../services/settings.server";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
+import { ReturnFormPreview } from "../components/admin/ReturnFormPreview";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const templates = await listEmailTemplates(session.shop);
   const settings = await getOrCreateSettings(session.shop);
-  return { shop: session.shop, templates, emailFrom: settings.emailFrom || "", returnsUrl: storefrontReturnsUrl(session.shop) };
+  const customization = getReturnFormCustomization(settings);
+  const DEFAULT_RETURN_FORM_CUSTOMIZATION = {
+    primaryColor: "#de4066",
+    primaryTextColor: "#121212",
+    textColor: "#ffffff",
+    secondaryBgColor: "#fff7f8",
+    showLogo: true,
+    showStoreName: true,
+    logoUrl: "",
+    storeName: "Grand Le Mar",
+  };
+  return {
+    shop: session.shop,
+    templates,
+    emailFrom: settings.emailFrom || "",
+    returnsUrl: storefrontReturnsUrl(session.shop),
+    customization,
+    DEFAULT_RETURN_FORM_CUSTOMIZATION,
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -28,6 +52,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!emailFrom) return { ok: false, message: "Enter a company sender email address" };
       await updateSettings(shop, { emailFrom });
       return { ok: true, message: "Company sender email saved" };
+    }
+    if (intent === "save_form_customization") {
+      const primaryColor = String(formData.get("primaryColor") || "#de4066").trim();
+      const primaryTextColor = String(formData.get("primaryTextColor") || "#121212").trim();
+      const textColor = String(formData.get("textColor") || "#ffffff").trim();
+      const secondaryBgColor = String(formData.get("secondaryBgColor") || "#fff7f8").trim();
+      const showLogo = formData.get("showLogo") === "true";
+      const showStoreName = formData.get("showStoreName") === "true";
+      const logoUrl = String(formData.get("logoUrl") || "");
+      const storeName = String(formData.get("storeName") || "Grand Le Mar");
+
+      await updateReturnFormCustomization(shop, {
+        primaryColor,
+        primaryTextColor,
+        textColor,
+        secondaryBgColor,
+        showLogo,
+        showStoreName,
+        logoUrl,
+        storeName,
+      });
+      return { ok: true, message: "Palette saved successfully" };
     }
     if (intent === "save_template") {
       await upsertEmailTemplate(shop, {
@@ -190,14 +236,100 @@ function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
   );
 }
 
+function toHexColor(color: string, fallback: string = "#000000"): string {
+  if (!color) return fallback;
+  const trimmed = color.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(trimmed)) return trimmed;
+  if (/^#[0-9a-f]{3}$/.test(trimmed)) {
+    return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`;
+  }
+  return fallback;
+}
+
 export default function EmailTemplatesPage() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const templateActionRef = useRef<HTMLInputElement>(null);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+  const primaryColorInputRef = useRef<HTMLInputElement>(null);
+  const primaryTextColorInputRef = useRef<HTMLInputElement>(null);
+  const textColorInputRef = useRef<HTMLInputElement>(null);
+  const secondaryBgColorInputRef = useRef<HTMLInputElement>(null);
+  const paletteFetcher = useFetcher<any>();
 
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
+
+  const initialCustomization = data.customization || data.DEFAULT_RETURN_FORM_CUSTOMIZATION;
+  const [primaryColor, setPrimaryColor] = useState(initialCustomization.primaryColor || "#de4066");
+  const [primaryTextColor, setPrimaryTextColor] = useState(initialCustomization.primaryTextColor || "#121212");
+  const [textColor, setTextColor] = useState(initialCustomization.textColor || "#ffffff");
+  const [secondaryBgColor, setSecondaryBgColor] = useState(initialCustomization.secondaryBgColor || "#fff7f8");
+  const [showLogo, setShowLogo] = useState(initialCustomization.showLogo ?? true);
+  const [showStoreName, setShowStoreName] = useState(initialCustomization.showStoreName ?? true);
+  const [logoUrl, setLogoUrl] = useState(initialCustomization.logoUrl || "");
+  const [logoFileName, setLogoFileName] = useState(initialCustomization.logoUrl ? "Uploaded logo" : "grandlemar-logo.png");
+  const [storeName, setStoreName] = useState(initialCustomization.storeName || "Grand Le Mar");
+
+  useEffect(() => {
+    if (data.customization) {
+      setPrimaryColor(data.customization.primaryColor || "#de4066");
+      setPrimaryTextColor(data.customization.primaryTextColor || "#121212");
+      setTextColor(data.customization.textColor || "#ffffff");
+      setSecondaryBgColor(data.customization.secondaryBgColor || "#fff7f8");
+      setShowLogo(data.customization.showLogo ?? true);
+      setShowStoreName(data.customization.showStoreName ?? true);
+      if (data.customization.logoUrl) {
+        setLogoUrl(data.customization.logoUrl);
+        setLogoFileName("Uploaded logo");
+      }
+      if (data.customization.storeName) {
+        setStoreName(data.customization.storeName);
+      }
+    }
+  }, [data.customization]);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setLogoFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        if (result) {
+          setLogoUrl(result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleResetToDefault = () => {
+    setPrimaryColor(data.DEFAULT_RETURN_FORM_CUSTOMIZATION.primaryColor);
+    setPrimaryTextColor(data.DEFAULT_RETURN_FORM_CUSTOMIZATION.primaryTextColor);
+    setTextColor(data.DEFAULT_RETURN_FORM_CUSTOMIZATION.textColor);
+    setSecondaryBgColor(data.DEFAULT_RETURN_FORM_CUSTOMIZATION.secondaryBgColor);
+  };
+
+  const handleSavePalette = () => {
+    paletteFetcher.submit(
+      {
+        _action: "save_form_customization",
+        primaryColor,
+        primaryTextColor,
+        textColor,
+        secondaryBgColor,
+        showLogo: String(showLogo),
+        showStoreName: String(showStoreName),
+        logoUrl,
+        storeName,
+      },
+      { method: "post" }
+    );
+  };
+
+  const isSavingPalette = paletteFetcher.state !== "idle";
 
   return (
     <SettingsLayout activeTab="emails">
@@ -205,54 +337,473 @@ export default function EmailTemplatesPage() {
 
       {mode === "list" && (
         <div className="returbo-email-page">
-          <section className="returbo-card returbo-email-section">
-            <div className="returbo-card-header">
-              <h2 className="returbo-card-title">Customer return form customization</h2>
-              <p className="returbo-card-subtitle">Manage your return form, logo, and email notifications to create a custom return experience that suits your brand.</p>
+          <section className="returbo-card returbo-email-section" style={{ background: "#ffffff", padding: "24px 28px" }}>
+            <div className="returbo-card-header" style={{ marginBottom: 20 }}>
+              <h2 className="returbo-card-title" style={{ fontSize: 20, fontWeight: 800, color: "#111827", margin: "0 0 6px 0" }}>
+                Customer return form customization
+              </h2>
+              <p className="returbo-card-subtitle" style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+                Manage your return form, logo, and email notifications to create a custom return experience that suits your brand.
+              </p>
             </div>
 
-            <div className="returbo-logo-settings">
-              <h3>Your logo</h3>
-              <p>Recommended minimum resolution 512×512 px. The logo should be square shaped. Please check how the logo is displayed in your digital return form after uploading. Accepted file types: .jpg, .png.</p>
-              <div className="returbo-upload-preview"><span className="returbo-upload-file-icon" /> <span className="returbo-upload-button">Choose file</span><span>No file chosen</span></div>
-              <div className="returbo-static-check"><span />Show the logo in the digital return form.</div>
-              <div className="returbo-static-check"><span />Show the name of the store in the digital return form.</div>
-              <p className="returbo-static-check-help">You can choose to display the name of your company and your logo on the digital return form.</p>
-            </div>
+            <div className="returbo-return-form-preview" style={{ marginTop: 16 }}>
+              {/* Left Column: Branding and Color Palette Cards */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                {/* Card 1: Branding */}
+                <div style={{ background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "20px 22px", boxShadow: "0 1px 3px rgba(0,0,0,0.02)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 14, borderBottom: "1px solid #f1f5f9" }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#111827" }}>Branding</h3>
+                  </div>
 
-            <div className="returbo-return-form-preview">
-              <div className="returbo-preview-options">
-                <div className="returbo-palette-heading"><h3>Digital Return Form color palette</h3><span>Plus</span><span>Premium</span><span>Enterprise plan</span><p>Customize and adjust the colors to tailor the Digital Return Form to your brand.</p></div>
-                <div className="returbo-preview-option">
-                  <span className="returbo-preview-swatch returbo-preview-swatch-primary" />
-                  <div><strong>Main primary color</strong><span>Used for as background for primary buttons and as an action color for links, icons, etc.</span></div>
+                  <div style={{ paddingTop: 16 }}>
+                    <h4 style={{ margin: "0 0 4px 0", fontSize: 13, fontWeight: 700, color: "#111827" }}>Your logo</h4>
+                    <p style={{ margin: "0 0 14px 0", fontSize: 11, color: "#6b7280", lineHeight: 1.45 }}>
+                      Recommended minimum resolution 512×512 px. The logo should be square shaped. Accepted file types: .jpg, .png.
+                    </p>
+
+                    {/* Logo Box */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        background: "#ffffff",
+                        marginBottom: 16,
+                      }}
+                    >
+                      <div
+                        style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer", flex: 1 }}
+                        onClick={() => logoFileInputRef.current?.click()}
+                        title="Click to choose a new logo"
+                      >
+                        <input
+                          ref={logoFileInputRef}
+                          type="file"
+                          accept="image/png, image/jpeg, image/jpg"
+                          style={{ display: "none" }}
+                          onChange={handleLogoUpload}
+                        />
+                        {logoUrl ? (
+                          <img
+                            src={logoUrl}
+                            alt="Store logo"
+                            style={{ width: 40, height: 40, borderRadius: 6, objectFit: "contain", background: "#000000" }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: 6,
+                              background: "#000000",
+                              color: "#ffffff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontWeight: 800,
+                              fontSize: 13,
+                              letterSpacing: "0.04em",
+                              flexShrink: 0,
+                            }}
+                          >
+                            GLM
+                          </div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <strong style={{ fontSize: 12.5, fontWeight: 600, color: "#111827" }}>
+                            {logoFileName || "upload-logo.png"}
+                          </strong>
+                          <span style={{ fontSize: 11, color: "#6b7280" }}>
+                            512 × 512 • 24 KB
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        title="Remove logo"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLogoUrl("");
+                          setLogoFileName("");
+                        }}
+                        style={{
+                          background: "#ffffff",
+                          border: "1px solid #e5e7eb",
+                          borderRadius: 6,
+                          padding: "6px 8px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#6b7280",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Checkboxes */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 12.5, fontWeight: 500, color: "#1f2937", userSelect: "none" }}>
+                        <input
+                          type="checkbox"
+                          checked={showLogo}
+                          onChange={(e) => setShowLogo(e.target.checked)}
+                          style={{ width: 16, height: 16, margin: 0, accentColor: primaryColor, cursor: "pointer", borderRadius: 4 }}
+                        />
+                        <span>Show the logo in the digital return form.</span>
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 12.5, fontWeight: 500, color: "#1f2937", userSelect: "none" }}>
+                        <input
+                          type="checkbox"
+                          checked={showStoreName}
+                          onChange={(e) => setShowStoreName(e.target.checked)}
+                          style={{ width: 16, height: 16, margin: 0, accentColor: primaryColor, cursor: "pointer", borderRadius: 4 }}
+                        />
+                        <span>Show the name of the store in the digital return form.</span>
+                      </label>
+                    </div>
+                    <p style={{ margin: "8px 0 0 26px", color: "#9ca3af", fontSize: 11, lineHeight: 1.4 }}>
+                      You can choose to display the name of your company and your logo on the digital return form.
+                    </p>
+                  </div>
                 </div>
-                <div className="returbo-preview-option">
-                  <span className="returbo-preview-swatch returbo-preview-swatch-dark" />
-                  <div><strong>Primary text color</strong><span>Used for as the text color for headings and other primary elements.</span></div>
+
+                {/* Card 2: Digital Return Form color palette */}
+                <div style={{ background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "20px 22px", boxShadow: "0 1px 3px rgba(0,0,0,0.02)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="13.5" cy="6.5" r=".5" fill="#111827" />
+                      <circle cx="17.5" cy="10.5" r=".5" fill="#111827" />
+                      <circle cx="8.5" cy="7.5" r=".5" fill="#111827" />
+                      <circle cx="6.5" cy="12.5" r=".5" fill="#111827" />
+                      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+                    </svg>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#111827" }}>Digital Return Form color palette</h3>
+                    <span style={{ background: "#eff6ff", color: "#2563eb", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 9999 }}>Plus</span>
+                    <span style={{ background: "#eff6ff", color: "#2563eb", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 9999 }}>Premium</span>
+                  </div>
+                  <p style={{ margin: "4px 0 16px 0", color: "#6b7280", fontSize: 11.5, lineHeight: 1.45 }}>
+                    Customize and adjust the colors to tailor the Digital Return Form to your brand.
+                  </p>
+
+                  {/* 4 Color Options */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {/* Main primary color */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                      <button
+                        type="button"
+                        title="Click to pick Main primary color"
+                        onClick={() => {
+                          try { primaryColorInputRef.current?.showPicker(); } catch { primaryColorInputRef.current?.click(); }
+                        }}
+                        style={{
+                          width: 32,
+                          height: 26,
+                          borderRadius: 6,
+                          backgroundColor: primaryColor,
+                          border: `1px solid ${primaryColor.toLowerCase() === "#ffffff" ? "#cbd2da" : primaryColor}`,
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          position: "relative",
+                          padding: 0,
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <input
+                          ref={primaryColorInputRef}
+                          type="color"
+                          value={toHexColor(primaryColor, "#de4066")}
+                          onInput={(e) => setPrimaryColor(e.currentTarget.value)}
+                          onChange={(e) => setPrimaryColor(e.target.value)}
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+                          aria-label="Pick main primary color"
+                        />
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                        <strong style={{ fontSize: 12.5, fontWeight: 700, color: "#111827" }}>Main primary color</strong>
+                        <span style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.35 }}>
+                          Used for as background for primary buttons and as an action color for links, icons, etc.
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={primaryColor}
+                        onInput={(e) => setPrimaryColor(e.currentTarget.value)}
+                        onChange={(e) => setPrimaryColor(e.target.value)}
+                        style={{
+                          width: 76,
+                          height: 32,
+                          fontSize: 12,
+                          padding: "4px 8px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 6,
+                          fontFamily: "monospace",
+                          color: "#374151",
+                          background: "#ffffff",
+                          textAlign: "center",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+
+                    {/* Primary text color */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                      <button
+                        type="button"
+                        title="Click to pick Primary text color"
+                        onClick={() => {
+                          try { primaryTextColorInputRef.current?.showPicker(); } catch { primaryTextColorInputRef.current?.click(); }
+                        }}
+                        style={{
+                          width: 32,
+                          height: 26,
+                          borderRadius: 6,
+                          backgroundColor: primaryTextColor,
+                          border: `1px solid ${primaryTextColor.toLowerCase() === "#ffffff" ? "#cbd2da" : primaryTextColor}`,
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          position: "relative",
+                          padding: 0,
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <input
+                          ref={primaryTextColorInputRef}
+                          type="color"
+                          value={toHexColor(primaryTextColor, "#121212")}
+                          onInput={(e) => setPrimaryTextColor(e.currentTarget.value)}
+                          onChange={(e) => setPrimaryTextColor(e.target.value)}
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+                          aria-label="Pick primary text color"
+                        />
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                        <strong style={{ fontSize: 12.5, fontWeight: 700, color: "#111827" }}>Primary text color</strong>
+                        <span style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.35 }}>
+                          Used for as the text color for headings and other primary elements.
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={primaryTextColor}
+                        onInput={(e) => setPrimaryTextColor(e.currentTarget.value)}
+                        onChange={(e) => setPrimaryTextColor(e.target.value)}
+                        style={{
+                          width: 76,
+                          height: 32,
+                          fontSize: 12,
+                          padding: "4px 8px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 6,
+                          fontFamily: "monospace",
+                          color: "#374151",
+                          background: "#ffffff",
+                          textAlign: "center",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+
+                    {/* Text color */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                      <button
+                        type="button"
+                        title="Click to pick Text color"
+                        onClick={() => {
+                          try { textColorInputRef.current?.showPicker(); } catch { textColorInputRef.current?.click(); }
+                        }}
+                        style={{
+                          width: 32,
+                          height: 26,
+                          borderRadius: 6,
+                          backgroundColor: textColor,
+                          border: `1px solid ${textColor.toLowerCase() === "#ffffff" ? "#cbd2da" : textColor}`,
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          position: "relative",
+                          padding: 0,
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <input
+                          ref={textColorInputRef}
+                          type="color"
+                          value={toHexColor(textColor, "#ffffff")}
+                          onInput={(e) => setTextColor(e.currentTarget.value)}
+                          onChange={(e) => setTextColor(e.target.value)}
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+                          aria-label="Pick text color"
+                        />
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                        <strong style={{ fontSize: 12.5, fontWeight: 700, color: "#111827" }}>Text color</strong>
+                        <span style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.35 }}>
+                          Used for the text for buttons and as a check icon color for when the item is selected.
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={textColor}
+                        onInput={(e) => setTextColor(e.currentTarget.value)}
+                        onChange={(e) => setTextColor(e.target.value)}
+                        style={{
+                          width: 76,
+                          height: 32,
+                          fontSize: 12,
+                          padding: "4px 8px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 6,
+                          fontFamily: "monospace",
+                          color: "#374151",
+                          background: "#ffffff",
+                          textAlign: "center",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+
+                    {/* Secondary background color */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                      <button
+                        type="button"
+                        title="Click to pick Secondary background color"
+                        onClick={() => {
+                          try { secondaryBgColorInputRef.current?.showPicker(); } catch { secondaryBgColorInputRef.current?.click(); }
+                        }}
+                        style={{
+                          width: 32,
+                          height: 26,
+                          borderRadius: 6,
+                          backgroundColor: secondaryBgColor,
+                          border: `1px solid ${secondaryBgColor.toLowerCase() === "#ffffff" ? "#cbd2da" : secondaryBgColor}`,
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          position: "relative",
+                          padding: 0,
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <input
+                          ref={secondaryBgColorInputRef}
+                          type="color"
+                          value={toHexColor(secondaryBgColor, "#fff7f8")}
+                          onInput={(e) => setSecondaryBgColor(e.currentTarget.value)}
+                          onChange={(e) => setSecondaryBgColor(e.target.value)}
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+                          aria-label="Pick secondary background color"
+                        />
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                        <strong style={{ fontSize: 12.5, fontWeight: 700, color: "#111827" }}>Secondary background color</strong>
+                        <span style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.35 }}>
+                          Used for as a background for secondary buttons and as a background color for badges.
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={secondaryBgColor}
+                        onInput={(e) => setSecondaryBgColor(e.currentTarget.value)}
+                        onChange={(e) => setSecondaryBgColor(e.target.value)}
+                        style={{
+                          width: 76,
+                          height: 32,
+                          fontSize: 12,
+                          padding: "4px 8px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 6,
+                          fontFamily: "monospace",
+                          color: "#374151",
+                          background: "#ffffff",
+                          textAlign: "center",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="returbo-preview-option">
-                  <span className="returbo-preview-swatch" />
-                  <div><strong>Text color</strong><span>Used for the text for buttons and as a check icon color for when the item is selected.</span></div>
+
+                {/* Bottom Action Bar */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Saved</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={handleResetToDefault}
+                      style={{
+                        background: "#ffffff",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 8,
+                        padding: "8px 16px",
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: "#374151",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      Back to default
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSavePalette}
+                      disabled={isSavingPalette}
+                      style={{
+                        backgroundColor: "#de4066",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "8px 20px",
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        cursor: isSavingPalette ? "wait" : "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                        <polyline points="17 21 17 13 7 13 7 21" />
+                        <polyline points="7 3 7 8 15 8" />
+                      </svg>
+                      <span>{isSavingPalette ? "Saving..." : "Save palette"}</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="returbo-preview-option">
-                  <span className="returbo-preview-swatch returbo-preview-swatch-soft" />
-                  <div><strong>Secondary background color</strong><span>Used for as a background for secondary buttons and as a background color for badges.</span></div>
-                </div>
-                <div className="returbo-palette-actions"><button type="button">Back to default</button><button type="button" disabled>Save palette</button></div>
               </div>
 
-              <div className="returbo-return-preview" aria-label="Customer return form preview">
-                <span className="returbo-preview-eyebrow">Preview</span>
-                <h3>Pick what you&apos;d like to return.</h3>
-                <p>Order <strong>#1234</strong> · Placed Mar 2, 2026 · Shipped Mar 4, 2026</p>
-                <div className="returbo-preview-deadline"><b>●</b> You have until <strong>Mar 14, 2026</strong> to return items from this order (12 days).</div>
-                <div className="returbo-preview-item"><span className="returbo-preview-product" /><span><strong>Organic Woollen Pullover</strong><small>L / Ivory<br />2 199.00 SEK</small></span><span className="returbo-preview-price">✓</span></div>
-                <div className="returbo-preview-links">⌕ &nbsp; Edit item &nbsp;&nbsp; ♜ &nbsp; Delete from request</div>
-                <button type="button" className="returbo-preview-submit">➤ &nbsp; Send in request</button>
-                <div className="returbo-preview-colors"><strong>Color *</strong><div><span>Ivory</span><span>White</span><span>Peach</span><span>Navy blue</span><span className="active">Calm pink ✓</span></div></div>
-                <button type="button" className="returbo-preview-confirm">⌄ &nbsp; Confirm</button>
-              </div>
+              {/* Right Column: Live Return Form Preview */}
+              <ReturnFormPreview
+                primaryColor={primaryColor}
+                primaryTextColor={primaryTextColor}
+                textColor={textColor}
+                secondaryBgColor={secondaryBgColor}
+                showLogo={showLogo}
+                showStoreName={showStoreName}
+                logoUrl={logoUrl}
+                storeName={storeName}
+              />
             </div>
           </section>
 
@@ -390,7 +941,6 @@ export default function EmailTemplatesPage() {
                   style={{ width: "100%", height: 38, background: "#ffffff" }}
                 >
                   <option value="en">English</option>
-                  <option value="sv">Swedish</option>
                 </select>
               </div>
 
@@ -471,7 +1021,6 @@ export default function EmailTemplatesPage() {
                   style={{ width: "100%", height: 38, background: "#ffffff" }}
                 >
                   <option value="en">English</option>
-                  <option value="sv">Swedish</option>
                 </select>
               </div>
 
