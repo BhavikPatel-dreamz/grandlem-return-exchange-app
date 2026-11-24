@@ -5,20 +5,20 @@ import { createWithdrawal } from "../services/withdrawal.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
-  return { shop: url.searchParams.get("shop") || "", lang: (url.searchParams.get("lang") as "en" | "sv") || "en" };
+  return { shop: url.searchParams.get("shop") || "", lang: "en" as const };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const shop = String(formData.get("shop") || "").trim();
-  const lang = (String(formData.get("lang") || "en") as "en" | "sv");
+  const lang = "en" as const;
   const stage = String(formData.get("_stage") || "lookup");
 
   if (stage === "confirm") {
     const orderNumber = String(formData.get("orderNumber") || "").trim();
     const email = String(formData.get("email") || "").trim();
     try {
-      const result = await createWithdrawal(shop, orderNumber, email, lang);
+      const result = await createWithdrawal(shop, orderNumber, email);
       return { ok: true, created: true, ...result, lang };
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : "Error", lang };
@@ -37,7 +37,7 @@ export default function WithdrawIndexPage() {
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const shop = actionData && "shop" in actionData ? (actionData as any).shop : loaderData.shop;
-  const lang = (actionData && "lang" in actionData ? (actionData as any).lang : loaderData.lang) as "en" | "sv";
+  const lang = "en" as const;
   const confirmed = !!actionData && "created" in actionData && (actionData as any).created === true;
 
   return (

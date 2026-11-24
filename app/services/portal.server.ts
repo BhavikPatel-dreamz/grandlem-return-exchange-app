@@ -12,6 +12,7 @@ export type PortalErrorCode =
   | "NOT_FULFILLED"
   | "DEADLINE_EXPIRED"
   | "ALL_ITEMS_EXCLUDED_OR_RETURNED"
+  | "ALREADY_REQUESTED"
   | "INVALID_INPUT";
 
 export type PortalLineItem = {
@@ -22,6 +23,8 @@ export type PortalLineItem = {
   productId: string | null;
   collectionIds: string[];
   excluded: boolean;
+  variantPrice?: string | null;
+  variantImage?: { url: string; altText: string | null } | null;
 };
 
 export type PortalOrderResult = {
@@ -31,14 +34,17 @@ export type PortalOrderResult = {
     id: string;
     name: string;
     email: string | null;
+    customerName: string | null;
     createdAt: string;
     fulfillmentStatus: string | null;
     lineItems: PortalLineItem[];
+    market?: string | null;
+    fulfillmentLocationId?: string | null;
   };
   eligibleLineItemIds: string[];
   deadline: string;
   requestType: "return" | "exchange" | "complaint";
-  reasons: { id: string; labelEn: string; labelSv: string; appliesTo: string }[];
+  reasons: { id: string; labelEn: string; parentLabel?: string; appliesTo: string }[];
 };
 
 export type PortalError = { ok: false; code: PortalErrorCode; message: string };
@@ -64,6 +70,22 @@ function normalizeOrderNumber(input: string): string {
   return input.trim().replace(/^#/, "");
 }
 
+function getOrderCustomerName(
+  customer: { firstName?: string | null; lastName?: string | null } | null | undefined,
+  shippingName?: string | null,
+) {
+  return [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || shippingName || null;
+}
+
+async function hasExistingReturnRequest(shop: string, orderId: string): Promise<boolean> {
+  const numericId = orderId.split("/").pop() || orderId;
+  const existing = await prisma.returnRequest.findFirst({
+    where: { shop, type: "return", shopifyOrderId: { in: [numericId, orderId] } },
+    select: { id: true },
+  });
+  return Boolean(existing);
+}
+
 const ORDER_QUERY = `#graphql
   query portalOrderLookup($query: String!) {
     orders(first: 1, query: $query) {
@@ -72,9 +94,17 @@ const ORDER_QUERY = `#graphql
           id
           name
           email
+          customer { firstName lastName }
           createdAt
-          fulfillmentStatus
           displayFulfillmentStatus
+          shippingAddress { name countryCodeV2 }
+          fulfillmentOrders(first: 10) {
+            edges {
+              node {
+                assignedLocation { location { id } }
+              }
+            }
+          }
           lineItems(first: 50) {
             edges {
               node {
@@ -83,6 +113,8 @@ const ORDER_QUERY = `#graphql
                 quantity
                 variant {
                   id
+                  price
+                  image { id url altText }
                   product {
                     id
                     collections(first: 20) {
@@ -145,10 +177,14 @@ async function validateOrderNode(
   node: any,
   requestType: "return" | "exchange" | "complaint",
 ): Promise<PortalOrderResult | PortalError> {
-  const fulfillmentStatus = node.displayFulfillmentStatus || node.fulfillmentStatus;
+  const fulfillmentStatus = node.displayFulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
     return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
+  }
+
+  if (requestType === "return" && await hasExistingReturnRequest(shop, String(node.id))) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -163,6 +199,8 @@ async function validateOrderNode(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
       excluded: false,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
     };
   });
 
@@ -203,8 +241,10 @@ async function validateOrderNode(
 
   const deadline = await getEffectiveDeadline(shop, shopifyOrderId, requestType, new Date(node.createdAt));
   if (isExpired(deadline)) {
-    return { ok: false, code: "DEADLINE_EXPIRED", message: "Return/exchange/complaint deadline has expired." };
+    return { ok: false, code: "DEADLINE_EXPIRED", message: "Request deadline has expired." };
   }
+
+  const fulfillmentLocationId = node.fulfillmentOrders?.edges?.[0]?.node?.assignedLocation?.location?.id ?? null;
 
   // ensure settings exist for shop (side effect ok)
   await getOrCreateSettings(shop);
@@ -217,9 +257,12 @@ async function validateOrderNode(
       id: node.id,
       name: node.name,
       email: node.email,
+      customerName: getOrderCustomerName(node.customer, node.shippingAddress?.name),
       createdAt: node.createdAt,
       fulfillmentStatus,
       lineItems,
+      market: node.shippingAddress?.countryCodeV2 ?? null,
+      fulfillmentLocationId,
     },
     eligibleLineItemIds,
     deadline: deadline.toISOString(),
@@ -251,9 +294,10 @@ const ORDER_BY_ID_QUERY = `#graphql
       id
       name
       email
+      customer { id firstName lastName }
       createdAt
       displayFulfillmentStatus
-      customer { id }
+      shippingAddress { name countryCodeV2 }
       lineItems(first: 50) {
         edges {
           node {
@@ -262,6 +306,8 @@ const ORDER_BY_ID_QUERY = `#graphql
             quantity
             variant {
               id
+              price
+              image { id url altText }
               product {
                 id
                 collections(first: 20) { edges { node { id } } }
@@ -369,16 +415,179 @@ export async function revalidateOrderById(
   return validateOrderNode(shop, node, requestType);
 }
 
-export function portalErrorCodeToMessage(code: PortalErrorCode, lang: "en" | "sv" = "en"): string {
-  const messages: Record<PortalErrorCode, { en: string; sv: string }> = {
-    SHOP_REQUIRED: { en: "Shop is required.", sv: "Butik krävs." },
-    RATE_LIMITED: { en: "Too many attempts. Please try again later.", sv: "För många försök. Försök igen senare." },
-    ORDER_NOT_FOUND: { en: "Order not found.", sv: "Ordern hittades inte." },
-    EMAIL_MISMATCH: { en: "Email does not match the order.", sv: "E-post matchar inte ordern." },
-    NOT_FULFILLED: { en: "Order has not been fulfilled yet.", sv: "Ordern har inte levererats ännu." },
-    DEADLINE_EXPIRED: { en: "Return deadline has expired.", sv: "Returfristen har löpt ut." },
-    ALL_ITEMS_EXCLUDED_OR_RETURNED: { en: "All items are excluded or already returned.", sv: "Alla artiklar är undantagna eller redan returnerade." },
-    INVALID_INPUT: { en: "Please fill in all required fields.", sv: "Fyll i alla obligatoriska fält." },
+/**
+ * Basic validation: only checks order exists, email matches, and order is fulfilled.
+ * Does NOT check exclusions, deadlines, or reasons (those depend on requestType).
+ * Used for initial order lookup before request type is selected.
+ */
+export async function lookupAndValidateOrderBasic(
+  shop: string,
+  orderNumberInput: string,
+  emailInput: string,
+): Promise<PortalOrderResult | PortalError> {
+  const orderNumber = normalizeOrderNumber(orderNumberInput);
+  const email = emailInput.trim().toLowerCase();
+  if (!shop || !orderNumber || !email) {
+    return { ok: false, code: "INVALID_INPUT", message: "Shop, order number and email are required." };
+  }
+
+  let admin;
+  try {
+    ({ admin } = await unauthenticated.admin(shop));
+  } catch {
+    return { ok: false, code: "SHOP_REQUIRED", message: "This shop is not available." };
+  }
+
+  const q = `name:#${orderNumber}`;
+  const response = await admin.graphql(ORDER_QUERY, { variables: { query: q } });
+  const json = await response.json();
+  const node = json?.data?.orders?.edges?.[0]?.node;
+
+  if (!node) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  if (!node.email || node.email.toLowerCase() !== email) {
+    return { ok: false, code: "EMAIL_MISMATCH", message: "Email does not match the order." };
+  }
+
+  if (await hasExistingReturnRequest(shop, String(node.id))) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
+
+  const fulfillmentStatus = node.displayFulfillmentStatus;
+  const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
+  if (!fulfilled) {
+    return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
+    const n = e.node;
+    return {
+      id: n.id,
+      title: n.title,
+      quantity: n.quantity,
+      variantId: n.variant?.id ?? null,
+      productId: n.variant?.product?.id ?? null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
+      excluded: false,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
+    };
+  });
+
+  const allReasons = await listReturnReasons(shop, true);
+
+  return {
+    ok: true,
+    shop,
+    order: {
+      id: node.id,
+      name: node.name,
+      email: node.email,
+      customerName: getOrderCustomerName(node.customer, node.shippingAddress?.name),
+      createdAt: node.createdAt,
+      fulfillmentStatus,
+      lineItems,
+      market: node.shippingAddress?.countryCodeV2 ?? null,
+    },
+    eligibleLineItemIds: lineItems.map((li) => li.id),
+    deadline: new Date().toISOString(),
+    requestType: "return",
+    reasons: allReasons.map((r) => ({
+      id: r.id,
+      labelEn: r.labelEn,
+      appliesTo: r.appliesTo,
+    })),
   };
-  return messages[code][lang];
+}
+
+/**
+ * Basic validation for logged-in customer: checks order exists, belongs to customer, and is fulfilled.
+ * Does NOT check exclusions, deadlines, or reasons (those depend on requestType).
+ */
+export async function lookupOrderForCustomerBasic(
+  shop: string,
+  orderId: string,
+  customerId: string,
+): Promise<PortalOrderResult | PortalError> {
+  const gid = customerGid(customerId);
+  if (!gid) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  const node = await fetchOrderNodeById(shop, orderId);
+  if ("ok" in node) return node;
+  if (node.customer?.id !== gid) {
+    return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
+  }
+
+  if (await hasExistingReturnRequest(shop, String(node.id))) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
+
+  const fulfillmentStatus = node.displayFulfillmentStatus;
+  const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
+  if (!fulfilled) {
+    return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
+    const n = e.node;
+    return {
+      id: n.id,
+      title: n.title,
+      quantity: n.quantity,
+      variantId: n.variant?.id ?? null,
+      productId: n.variant?.product?.id ?? null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
+      excluded: false,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
+    };
+  });
+
+  const allReasons = await listReturnReasons(shop, true);
+
+  return {
+    ok: true,
+    shop,
+    order: {
+      id: node.id,
+      name: node.name,
+      email: node.email,
+      customerName: getOrderCustomerName(node.customer, node.shippingAddress?.name),
+      createdAt: node.createdAt,
+      fulfillmentStatus,
+      lineItems,
+      market: node.shippingAddress?.countryCodeV2 ?? null,
+    },
+    eligibleLineItemIds: lineItems.map((li) => li.id),
+    deadline: new Date().toISOString(),
+    requestType: "return",
+    reasons: allReasons.map((r) => ({
+      id: r.id,
+      labelEn: r.labelEn,
+      appliesTo: r.appliesTo,
+    })),
+  };
+}
+
+export function portalErrorCodeToMessage(code: PortalErrorCode): string {
+  const messages: Record<PortalErrorCode, string> = {
+    SHOP_REQUIRED: "Shop is required.",
+    RATE_LIMITED: "Too many attempts. Please try again later.",
+    ORDER_NOT_FOUND: "Order not found.",
+    EMAIL_MISMATCH: "Email does not match the order.",
+    NOT_FULFILLED: "Order has not been fulfilled yet.",
+    DEADLINE_EXPIRED: "Return deadline has expired.",
+    ALL_ITEMS_EXCLUDED_OR_RETURNED: "All items are excluded or already returned.",
+    ALREADY_REQUESTED: "A return request has already been submitted for this order.",
+    INVALID_INPUT: "Please fill in all required fields.",
+  };
+  return messages[code];
 }

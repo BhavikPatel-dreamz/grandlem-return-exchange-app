@@ -62,6 +62,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         condition: String(formData.get(`condition_${it.id}`) || "OK") as "OK" | "DAMAGED" | "WRONG_ITEM" | "MISSING",
         approvedQuantity: Number(formData.get(`approvedQty_${it.id}`) || it.returnedQuantity || it.quantity),
         note: String(formData.get(`note_${it.id}`) || ""),
+        restock: formData.get(`restock_${it.id}`) === "on",
       }));
 
       const result = await saveInspection(shop, requestId, inspections);
@@ -157,6 +158,13 @@ export default function InspectionPage() {
                         value={String(insp?.approvedQuantity ?? it.returnedQuantity ?? it.quantity)}
                       />
                       <s-text-field name={`note_${it.id}`} label="Note" value={insp?.note || ""} />
+                      {rr.type !== "complaint" && (
+                        <s-checkbox
+                          name={`restock_${it.id}`}
+                          label="Restock if condition is OK"
+                          defaultChecked={Boolean(it.restocked)}
+                        />
+                      )}
                     </s-stack>
                   </div>
                 );
