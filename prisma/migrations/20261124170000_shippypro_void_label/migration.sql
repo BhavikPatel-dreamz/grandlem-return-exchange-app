@@ -1,0 +1,1 @@
+ALTER TABLE "ReturnLabel" ADD COLUMN "shippyproOrderId" TEXT;

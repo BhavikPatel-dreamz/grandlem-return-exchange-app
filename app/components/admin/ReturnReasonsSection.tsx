@@ -323,7 +323,7 @@ export function ReturnReasonsSection({ reasons }: ReturnReasonsSectionProps) {
                   Restock options
                 </h3>
                 <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 12px 0" }}>
-                  Manually decide whether to restock items during quality checks. Complaints will never be restocked.
+                  Manually decide whether to restock items during quality checks.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151", cursor: "pointer" }}>

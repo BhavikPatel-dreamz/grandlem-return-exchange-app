@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
-import { createReturnLabel } from "../services/shippypro.server";
+import { createReturnLabel, voidReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
 import { performRestock } from "../services/restock.server";
@@ -45,6 +45,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (!rr) throw new Response("Not found", { status: 404 });
 
   const itemImages: Record<string, string> = {};
+  let customerName = rr.customerName;
+  let carrierName: string | null = null;
+  if (rr.label?.carrierId) {
+    const carrier = await prisma.carrier.findFirst({
+      where: { shop, id: rr.label.carrierId },
+      select: { name: true },
+    });
+    carrierName = carrier?.name ?? null;
+  }
   const orderGid = rr.shopifyOrderId?.startsWith("gid://shopify/Order/")
     ? rr.shopifyOrderId
     : rr.shopifyOrderId
@@ -57,6 +66,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         `#graphql
         query getOrderLineItemImages($id: ID!) {
           order(id: $id) {
+            customer { firstName lastName }
+            shippingAddress { name }
             lineItems(first: 50) {
               edges {
                 node {
@@ -85,6 +96,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         { variables: { id: orderGid } }
       );
       const json = await response.json();
+      const customer = json?.data?.order?.customer;
+      customerName ||= [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || json?.data?.order?.shippingAddress?.name || null;
       const lineItemNodes = json?.data?.order?.lineItems?.edges?.map((e: any) => e.node) || [];
       for (const node of lineItemNodes) {
         const img = node.image?.url || node.variant?.image?.url || node.variant?.product?.featuredImage?.url;
@@ -139,7 +152,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
-  return { rr, itemImages };
+  return { rr: { ...rr, customerName }, itemImages, carrierName };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -190,18 +203,29 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true, message: "Request rejected" };
     }
     if (intent === "regenerate_label") {
-      await createReturnLabel(actualId);
-      return { ok: true, message: "Label regenerated" };
+      const result = await createReturnLabel(actualId);
+      if (!result.ok) {
+        const message = result.error === "No carrier available for routing"
+          ? "No carrier is configured for this order. Choose a carrier and service in Settings > Integrations > Return labels and routing, then regenerate the label."
+          : result.error === "SHIPPYPRO_API_KEY not configured"
+            ? "ShippyPro API key is missing. Add and save it in Settings > Integrations, then regenerate the label."
+            : `Shipping label generation failed: ${result.error || "Unknown error"}`;
+        return { ok: false, intent: "regenerate_label", message };
+      }
+      return { ok: true, intent: "regenerate_label", message: "Shipping label generated" };
     }
     if (intent === "void_label") {
-      if (rr.label) {
-        await prisma.returnLabel.update({ where: { id: rr.label.id }, data: { status: "voided" } });
-      }
-      return { ok: true, message: "Label voided" };
+      const result = await voidReturnLabel(actualId);
+      if (!result.ok) return { ok: false, intent: "void_label", message: result.error || "Unable to void shipping label" };
+      return { ok: true, message: "Label voided with ShippyPro" };
     }
     if (intent === "restock_update") {
+      if (rr.type === "complaint") {
+        return { ok: false, message: "Restocking is not available for complaint requests" };
+      }
       const itemId = String(formData.get("itemId"));
-      const decision = String(formData.get("restockDecision") || "pending");
+      const submittedDecision = String(formData.get("restockDecision") || "pending");
+      const decision = submittedDecision === "auto" ? "pending" : submittedDecision;
       const restocked = formData.get("restocked") === "on";
       await prisma.returnItem.update({
         where: { id: itemId },
@@ -298,8 +322,10 @@ function formatDateTime(value: string | Date) {
 }
 
 export default function ReturnDetailPage() {
-  const { rr, itemImages = {} } = useLoaderData<typeof loader>();
+  const { rr, itemImages = {}, carrierName } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const isGeneratingLabel = navigation.state !== "idle" && navigation.formData?.get("_action") === "regenerate_label";
   const [showRejectForm, setShowRejectForm] = useState(false);
 
   const allPhotos = rr.items?.flatMap((it: any) => it.photos || []) || [];
@@ -324,7 +350,7 @@ export default function ReturnDetailPage() {
         </div>
 
         {/* Feedback message banner */}
-        {actionData?.message && (
+        {actionData?.message && !(actionData.intent === "regenerate_label" && actionData.ok === false) && (
           <div className={`returbo-alert-banner ${actionData.ok !== false ? "success" : "error"}`}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {actionData.ok !== false ? (
@@ -523,7 +549,7 @@ export default function ReturnDetailPage() {
                     </div>
 
                     {/* Restock Management Form */}
-                    <Form method="post" className="returbo-detail-form-row">
+                    {rr.type !== "complaint" && <Form method="post" className="returbo-detail-form-row">
                       <input type="hidden" name="_action" value="restock_update" />
                       <input type="hidden" name="itemId" value={it.id} />
 
@@ -533,10 +559,9 @@ export default function ReturnDetailPage() {
 
                       <select
                         name="restockDecision"
-                        defaultValue={it.restockDecision || "pending"}
+                        defaultValue={it.restockDecision === "auto" ? "pending" : it.restockDecision || "pending"}
                         className="returbo-detail-select"
                       >
-                        <option value="auto">Auto restock</option>
                         <option value="manual">Manual restock</option>
                         <option value="no">Do not restock</option>
                         <option value="pending">Pending decision</option>
@@ -561,7 +586,7 @@ export default function ReturnDetailPage() {
                           ✓ Restocked {it.restockedAt ? `(${formatDate(it.restockedAt)})` : ""}
                         </span>
                       )}
-                    </Form>
+                    </Form>}
                   </div>
                 );
               })}
@@ -741,6 +766,16 @@ export default function ReturnDetailPage() {
 
             {/* 5. Shipping Label & Tracking History */}
             <div className="returbo-detail-card">
+              {actionData?.intent === "regenerate_label" && actionData.ok === false && (
+                <div className="returbo-alert-banner error" role="alert" style={{ marginBottom: 16 }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span>{actionData.message}</span>
+                </div>
+              )}
               <div className="returbo-detail-card-header">
                 <h2 className="returbo-detail-card-title">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -763,8 +798,12 @@ export default function ReturnDetailPage() {
                   <table className="returbo-detail-info-table" style={{ marginBottom: 16 }}>
                     <tbody>
                       <tr>
-                        <td className="returbo-detail-info-label">Carrier Connection</td>
-                        <td className="returbo-detail-info-val">{rr.label.connectionId || rr.carrierId || "Default carrier"}</td>
+                        <td className="returbo-detail-info-label">Selected Carrier</td>
+                        <td className="returbo-detail-info-val">{carrierName || rr.label.connectionId || rr.carrierId || "Default carrier"}</td>
+                      </tr>
+                      <tr>
+                        <td className="returbo-detail-info-label">Service</td>
+                        <td className="returbo-detail-info-val">{rr.label.service || "—"}</td>
                       </tr>
                       <tr>
                         <td className="returbo-detail-info-label">Tracking Number</td>
@@ -794,8 +833,8 @@ export default function ReturnDetailPage() {
                     )}
                     <Form method="post" style={{ display: "inline" }}>
                       <input type="hidden" name="_action" value="regenerate_label" />
-                      <button type="submit" className="returbo-btn-pink-outline">
-                        Regenerate label
+                      <button type="submit" className="returbo-btn-pink-outline" disabled={isGeneratingLabel}>
+                        {isGeneratingLabel ? "Generating label..." : "Regenerate label"}
                       </button>
                     </Form>
                     <Form method="post" style={{ display: "inline" }}>
@@ -839,8 +878,8 @@ export default function ReturnDetailPage() {
                   </p>
                   <Form method="post">
                     <input type="hidden" name="_action" value="regenerate_label" />
-                    <button type="submit" className="returbo-btn-primary">
-                      Generate shipping label
+                    <button type="submit" className="returbo-btn-primary" disabled={isGeneratingLabel}>
+                      {isGeneratingLabel ? "Generating label..." : "Generate shipping label"}
                     </button>
                   </Form>
                 </div>
@@ -1022,15 +1061,17 @@ export default function ReturnDetailPage() {
               <table className="returbo-detail-info-table">
                 <tbody>
                   <tr>
-                    <td className="returbo-detail-info-label">Customer</td>
+                    <td className="returbo-detail-info-label">Customer Name</td>
+                    <td className="returbo-detail-info-val">{rr.customerName || "—"}</td>
+                  </tr>
+                  <tr>
+                    <td className="returbo-detail-info-label">Customer Email</td>
                     <td className="returbo-detail-info-val">
                       {rr.customerEmail ? (
                         <a href={`mailto:${rr.customerEmail}`} style={{ color: "var(--returbo-pink)", textDecoration: "none" }}>
                           {rr.customerEmail}
                         </a>
-                      ) : (
-                        rr.customerName || "—"
-                      )}
+                      ) : "—"}
                     </td>
                   </tr>
                   <tr>

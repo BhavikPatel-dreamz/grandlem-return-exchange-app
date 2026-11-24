@@ -893,26 +893,160 @@ s-button[variant="secondary"]::part(button) {
   padding: 28px 24px 80px;
 }
 
+/* Table Pagination */
+.returbo-table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-top: 1px solid var(--returbo-border, #e5e7eb);
+  background: #ffffff;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.returbo-pagination-info {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.returbo-pagination-info strong {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.returbo-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.returbo-pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.returbo-pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.returbo-pagination-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #111827;
+}
+
+.returbo-pagination-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.returbo-pagination-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-pagination-page-btn:hover:not(.active) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #111827;
+}
+
+.returbo-pagination-page-btn.active {
+  background: #de4066;
+  border-color: #de4066;
+  color: #ffffff;
+  font-weight: 600;
+  cursor: default;
+}
+
+.returbo-pagination-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
 .returbo-returns-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 28px;
+  gap: 12px;
+  margin-bottom: 24px;
   flex-wrap: wrap;
+}
+
+@media (max-width: 960px) {
+  .returbo-returns-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .returbo-filter-pills {
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .returbo-filter-pills::-webkit-scrollbar {
+    display: none;
+  }
+  .returbo-actions-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .returbo-search-filter-form {
+    flex: 1;
+  }
+  .returbo-search-wrap {
+    flex: 1;
+    width: auto;
+  }
 }
 
 .returbo-filter-pills {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .returbo-pill {
   display: inline-flex;
   align-items: center;
-  padding: 6px 14px;
+  padding: 6px 12px;
   font-size: 13px;
   font-weight: 500;
   color: #4b5563;
@@ -923,6 +1057,8 @@ s-button[variant="secondary"]::part(button) {
   transition: all 0.15s ease;
   user-select: none;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .returbo-pill:hover {
@@ -939,7 +1075,41 @@ s-button[variant="secondary"]::part(button) {
 .returbo-actions-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.returbo-search-filter-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.returbo-filter-date-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.returbo-filter-date-wrap input {
+  width: 122px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  font-size: 12px;
 }
 
 .returbo-export-btn {
@@ -956,6 +1126,7 @@ s-button[variant="secondary"]::part(button) {
   transition: all 0.15s ease;
   padding: 0;
   outline: none;
+  flex-shrink: 0;
 }
 
 .returbo-export-btn:hover {
@@ -976,14 +1147,71 @@ s-button[variant="secondary"]::part(button) {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #ffffff;
-  padding: 0 12px;
-  width: 270px;
-  transition: border-color 0.15s ease;
+  padding: 0 10px;
+  width: 190px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
   box-sizing: border-box;
 }
 
 .returbo-search-wrap:focus-within {
   border-color: #111827;
+  box-shadow: 0 0 0 1px #111827;
+}
+
+.returbo-filter-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+.returbo-filter-select-wrap:hover {
+  border-color: #cbd5e1;
+}
+
+.returbo-filter-select-wrap:focus-within {
+  border-color: #111827;
+  box-shadow: 0 0 0 1px #111827;
+}
+
+.returbo-filter-select-wrap.has-value {
+  border-color: #111827;
+  background: #f8fafc;
+}
+
+.returbo-filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f172a;
+  padding: 0 22px 0 2px;
+  cursor: pointer;
+  height: 100%;
+  font-family: inherit;
+  max-width: 170px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.returbo-filter-select-arrow {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .returbo-search-input {

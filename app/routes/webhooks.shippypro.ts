@@ -24,6 +24,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     label = await prisma.returnLabel.findFirst({ where: { trackingNumber: String(trackingNumber) } });
   }
   if (!label && orderRef) {
+    label = await prisma.returnLabel.findFirst({ where: { shippyproOrderId: String(orderRef) } });
+  }
+  if (!label && orderRef) {
     const rr = await prisma.returnRequest.findFirst({ where: { OR: [{ orderNumber: String(orderRef) }, { shopifyOrderId: String(orderRef) }] } });
     if (rr) label = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
   }

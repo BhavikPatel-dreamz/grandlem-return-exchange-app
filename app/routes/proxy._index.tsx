@@ -1021,17 +1021,16 @@ function orderFoundScreen(
             <strong class="glr-product-name">${esc(li.title)}</strong>
             <span class="glr-product-quantity">Qty: ${esc(String(li.quantity))}</span>
             ${price}
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;">
+              Return quantity
+              <input type="number" name="qty_${esc(li.id)}" value="${esc(String(li.quantity))}" min="1" max="${esc(String(li.quantity))}" step="1" disabled style="width:72px;height:34px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;">
+            </label>
           </div>
         </div>
       `;
     })
     .join("");
   const productsHtml = productList || `<p class="glr-muted">${esc(t.noEligibleItems ?? "No eligible items.")}</p>`;
-
-  // 6. Item quantities
-  const itemSelection = eligibleItems
-    .map((li) => `<input type="hidden" name="qty_${esc(li.id)}" value="${esc(String(li.quantity))}">`)
-    .join("");
 
   const deadlineTime = new Date(result.deadline).getTime();
   const deadlineFormatted = deadlineDate;
@@ -1222,6 +1221,13 @@ function orderFoundScreen(
         var checkedType = document.querySelector('input[name="requestType"]:checked');
         var selectedType = checkedType ? checkedType.value : 'return';
         if (itemCheckboxes.length) itemCheckboxes[0].required = !hasSelection;
+        itemCheckboxes.forEach(function(checkbox) {
+          var quantityInput = document.querySelector('input[name="qty_' + checkbox.value + '"]');
+          if (quantityInput) {
+            quantityInput.disabled = !checkbox.checked;
+            quantityInput.required = checkbox.checked;
+          }
+        });
         reasonFields.forEach(function(field) {
           var checkbox = Array.from(itemCheckboxes).find(function(input) {
             return input.value === field.dataset.itemId;
@@ -1347,7 +1353,6 @@ function orderFoundScreen(
     ctx,
     "select_request_type",
     `${hiddenFields}
-${itemSelection}
 ${summary}
 ${productsHtml}
 ${deadlineBanner}
@@ -1495,7 +1500,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
       orderNumber: result.order.name,
       market: result.order.market ?? null,
       customerEmail: result.order.email,
-      customerName: null,
+      customerName: result.order.customerName,
       type: token.requestType,
       autoApprove: settings.autoApproveRequests,
       items,
@@ -1526,7 +1531,7 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
     console.warn("[Return Portal] No customer email found on order, skipping confirmation email");
   } else {
     await sendEventEmail(ctx.shop, settings.autoApproveRequests ? "approved" : "received", ctx.lang, customerEmail, {
-      customerName: customerEmail || "customer",
+      customerName: result.order.customerName || customerEmail || "customer",
       orderNumber: result.order.name,
       requestNumber: created.requestNumber,
       items: items.map((it) => it.title).join(", "),

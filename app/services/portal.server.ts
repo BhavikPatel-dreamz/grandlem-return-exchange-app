@@ -12,6 +12,7 @@ export type PortalErrorCode =
   | "NOT_FULFILLED"
   | "DEADLINE_EXPIRED"
   | "ALL_ITEMS_EXCLUDED_OR_RETURNED"
+  | "ALREADY_REQUESTED"
   | "INVALID_INPUT";
 
 export type PortalLineItem = {
@@ -33,6 +34,7 @@ export type PortalOrderResult = {
     id: string;
     name: string;
     email: string | null;
+    customerName: string | null;
     createdAt: string;
     fulfillmentStatus: string | null;
     lineItems: PortalLineItem[];
@@ -68,6 +70,22 @@ function normalizeOrderNumber(input: string): string {
   return input.trim().replace(/^#/, "");
 }
 
+function getOrderCustomerName(
+  customer: { firstName?: string | null; lastName?: string | null } | null | undefined,
+  shippingName?: string | null,
+) {
+  return [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || shippingName || null;
+}
+
+async function hasExistingReturnRequest(shop: string, orderId: string): Promise<boolean> {
+  const numericId = orderId.split("/").pop() || orderId;
+  const existing = await prisma.returnRequest.findFirst({
+    where: { shop, type: "return", shopifyOrderId: { in: [numericId, orderId] } },
+    select: { id: true },
+  });
+  return Boolean(existing);
+}
+
 const ORDER_QUERY = `#graphql
   query portalOrderLookup($query: String!) {
     orders(first: 1, query: $query) {
@@ -76,13 +94,14 @@ const ORDER_QUERY = `#graphql
           id
           name
           email
+          customer { firstName lastName }
           createdAt
           displayFulfillmentStatus
-          shippingAddress { countryCodeV2 }
+          shippingAddress { name countryCodeV2 }
           fulfillmentOrders(first: 10) {
             edges {
               node {
-                assignedLocation { id name }
+                assignedLocation { location { id } }
               }
             }
           }
@@ -164,6 +183,10 @@ async function validateOrderNode(
     return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
   }
 
+  if (requestType === "return" && await hasExistingReturnRequest(shop, String(node.id))) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
     const n = e.node;
@@ -221,7 +244,7 @@ async function validateOrderNode(
     return { ok: false, code: "DEADLINE_EXPIRED", message: "Request deadline has expired." };
   }
 
-  const fulfillmentLocationId = node.fulfillmentOrders?.edges?.[0]?.node?.assignedLocation?.id ?? null;
+  const fulfillmentLocationId = node.fulfillmentOrders?.edges?.[0]?.node?.assignedLocation?.location?.id ?? null;
 
   // ensure settings exist for shop (side effect ok)
   await getOrCreateSettings(shop);
@@ -234,6 +257,7 @@ async function validateOrderNode(
       id: node.id,
       name: node.name,
       email: node.email,
+      customerName: getOrderCustomerName(node.customer, node.shippingAddress?.name),
       createdAt: node.createdAt,
       fulfillmentStatus,
       lineItems,
@@ -270,10 +294,10 @@ const ORDER_BY_ID_QUERY = `#graphql
       id
       name
       email
+      customer { id firstName lastName }
       createdAt
       displayFulfillmentStatus
-      shippingAddress { countryCodeV2 }
-      customer { id }
+      shippingAddress { name countryCodeV2 }
       lineItems(first: 50) {
         edges {
           node {
@@ -427,6 +451,10 @@ export async function lookupAndValidateOrderBasic(
     return { ok: false, code: "EMAIL_MISMATCH", message: "Email does not match the order." };
   }
 
+  if (await hasExistingReturnRequest(shop, String(node.id))) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
+
   const fulfillmentStatus = node.displayFulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
@@ -459,6 +487,7 @@ export async function lookupAndValidateOrderBasic(
       id: node.id,
       name: node.name,
       email: node.email,
+      customerName: getOrderCustomerName(node.customer, node.shippingAddress?.name),
       createdAt: node.createdAt,
       fulfillmentStatus,
       lineItems,
@@ -495,6 +524,10 @@ export async function lookupOrderForCustomerBasic(
     return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
   }
 
+  if (await hasExistingReturnRequest(shop, String(node.id))) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
+
   const fulfillmentStatus = node.displayFulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
@@ -527,6 +560,7 @@ export async function lookupOrderForCustomerBasic(
       id: node.id,
       name: node.name,
       email: node.email,
+      customerName: getOrderCustomerName(node.customer, node.shippingAddress?.name),
       createdAt: node.createdAt,
       fulfillmentStatus,
       lineItems,
@@ -552,6 +586,7 @@ export function portalErrorCodeToMessage(code: PortalErrorCode): string {
     NOT_FULFILLED: "Order has not been fulfilled yet.",
     DEADLINE_EXPIRED: "Return deadline has expired.",
     ALL_ITEMS_EXCLUDED_OR_RETURNED: "All items are excluded or already returned.",
+    ALREADY_REQUESTED: "A return request has already been submitted for this order.",
     INVALID_INPUT: "Please fill in all required fields.",
   };
   return messages[code];

@@ -29,7 +29,7 @@ export async function createWithdrawal(shop: string, orderNumber: string, email:
     orderNumber: result.order.name,
     market: null,
     customerEmail: result.order.email || email,
-    customerName: null,
+    customerName: result.order.customerName,
     type: "return",
     items,
     fulfillmentLocationId: result.order.fulfillmentLocationId ?? null,
@@ -62,7 +62,7 @@ export async function createWithdrawal(shop: string, orderNumber: string, email:
   });
 
   await sendEventEmail(shop, "received", "en", result.order.email || email, {
-    customerName: result.order.email || "customer",
+    customerName: result.order.customerName || result.order.email || "customer",
     orderNumber: result.order.name,
     items: items.map((it) => it.title).join(", "),
   }).catch(() => null);

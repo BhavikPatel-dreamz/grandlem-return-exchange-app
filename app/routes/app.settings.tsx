@@ -14,6 +14,7 @@ import {
   getReturnImageCommentConfig,
   updateReturnImageCommentConfig,
 } from "../services/settings.server";
+import prisma from "../db.server";
 import {
   listReturnReasons,
   createReturnReason,
@@ -33,6 +34,19 @@ import {
 import { syncCarriers, setShippyproApiKey, getShippyproConnection } from "../services/shippypro.server";
 
 const ROUTING_MARKETS = ["DEFAULT", "US", "SE", "GB"] as const;
+const DEADLINE_UNIT_DAYS = { days: 1, weeks: 7, months: 30 } as const;
+
+function deadlineDaysFromForm(formData: FormData, prefix: "returnDeadline" | "exchangeDeadline") {
+  const amount = Number(formData.get(`${prefix}Days`));
+  const unit = String(formData.get(`${prefix}Unit`) || "days") as keyof typeof DEADLINE_UNIT_DAYS;
+  return Math.round(amount * (DEADLINE_UNIT_DAYS[unit] || 1));
+}
+
+function deadlineDisplay(days: number) {
+  if (days > 0 && days % 30 === 0) return { amount: days / 30, unit: "months" };
+  if (days > 0 && days % 7 === 0) return { amount: days / 7, unit: "weeks" };
+  return { amount: days, unit: "days" };
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -67,6 +81,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     exclusions,
     deadlineExtensions,
     shippypro: await getShippyproConnection(shop),
+    carriers: await prisma.carrier.findMany({
+      where: { shop },
+      orderBy: { name: "asc" },
+      select: { id: true, shippyproCarrierId: true, name: true, service: true, syncedAt: true },
+    }),
     returnImageCommentConfig: getReturnImageCommentConfig(settings),
   };
 };
@@ -80,8 +99,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     if (intent === "save_settings") {
       await updateSettings(shop, {
-        returnDeadlineDays: Number(formData.get("returnDeadlineDays")),
-        exchangeDeadlineDays: Number(formData.get("exchangeDeadlineDays")),
+        returnDeadlineDays: deadlineDaysFromForm(formData, "returnDeadline"),
+        exchangeDeadlineDays: deadlineDaysFromForm(formData, "exchangeDeadline"),
         autoRefundOnInspection: formData.get("autoRefundOnInspection") === "on",
         refundShippingCost: formData.get("refundShippingCost") === "on",
         claimRequiresPhoto: formData.get("claimRequiresPhoto") === "on",
@@ -222,7 +241,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await upsertDeadlineExtension(shop, {
         shopifyOrderId: String(formData.get("shopifyOrderId") || ""),
         type: String(formData.get("deadlineType")) as "return" | "exchange" | "complaint",
-        newDeadline: new Date(String(formData.get("newDeadline"))),
+        newDeadline: new Date(`${String(formData.get("newDeadline") || "")}T23:59:59.999Z`),
         note: String(formData.get("note") || "") || undefined,
       });
       return { ok: true, message: "Deadline extension saved" };
@@ -279,10 +298,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 const MARKET_INFO: Record<string, { label: string; flag: string; badge: string; description: string }> = {
   DEFAULT: {
-    label: "Default fallback",
+    label: "Default",
     flag: "🌐",
     badge: "All other markets",
-    description: "Fallback destination and carrier rules for all customer return requests not covered by a specific country rule.",
+    description: "Destination and carrier rules for all customer return requests not covered by a specific country rule.",
   },
   US: {
     label: "United States",
@@ -306,6 +325,8 @@ const MARKET_INFO: Record<string, { label: string; flag: string; badge: string; 
 
 export function SettingsView() {
   const data = useLoaderData<typeof loader>();
+  const returnDeadline = deadlineDisplay(data.settings.returnDeadlineDays ?? 14);
+  const exchangeDeadline = deadlineDisplay(data.settings.exchangeDeadlineDays ?? 14);
   const [activeTab, setActiveTab] = useState<"general" | "compliance" | "integrations">("general");
   const [showExtendForm, setShowExtendForm] = useState(false);
   const [selectedRoutingMarket, setSelectedRoutingMarket] = useState<string>("DEFAULT");
@@ -368,7 +389,7 @@ export function SettingsView() {
                   <input
                     type="number"
                     name="returnDeadlineDays"
-                    defaultValue={String(data.settings.returnDeadlineDays ?? 14)}
+                    defaultValue={String(returnDeadline.amount)}
                     style={{
                       width: 58,
                       height: 34,
@@ -383,7 +404,7 @@ export function SettingsView() {
                   />
                   <select
                     name="returnDeadlineUnit"
-                    defaultValue="days"
+                    defaultValue={returnDeadline.unit}
                     style={{
                       height: 34,
                       padding: "0 8px",
@@ -422,7 +443,7 @@ export function SettingsView() {
                   <input
                     type="number"
                     name="exchangeDeadlineDays"
-                    defaultValue={String(data.settings.exchangeDeadlineDays ?? 14)}
+                    defaultValue={String(exchangeDeadline.amount)}
                     style={{
                       width: 58,
                       height: 34,
@@ -437,7 +458,7 @@ export function SettingsView() {
                   />
                   <select
                     name="exchangeDeadlineUnit"
-                    defaultValue="days"
+                    defaultValue={exchangeDeadline.unit}
                     style={{
                       height: 34,
                       padding: "0 8px",
@@ -750,80 +771,614 @@ export function SettingsView() {
       </div>
 
       <div style={{ display: activeTab === "integrations" ? "block" : "none" }}>
-        <div className="returbo-card">
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">ShippyPro connection</h2>
-            <p className="returbo-card-subtitle">Connect your ShippyPro account for automated carrier label generation.</p>
+        {/* ShippyPro connection */}
+        <div className="returbo-card" style={{ marginBottom: 22 }}>
+          <div className="returbo-card-header" style={{ marginBottom: 18, paddingBottom: 0, borderBottom: "none" }}>
+            <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
+              ShippyPro connection
+            </h2>
+            <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+              Connect your ShippyPro account for automated carrier label generation.
+            </p>
           </div>
-          <p style={{ margin: "0 0 16px 0", fontSize: 13 }}>
-            {data.shippypro.hasKey ? (
-              <span className="returbo-badge returbo-badge-green">Key saved ({data.shippypro.hint || "****"})</span>
-            ) : (
-              <span className="returbo-badge returbo-badge-yellow">No per-shop key saved; using SHIPPYPRO_API_KEY env fallback.</span>
-            )}
-          </p>
-          <Form method="post">
-            <input type="hidden" name="_action" value="save_shippypro_key" />
-            <s-stack direction="block" gap="base">
-              <s-text-field name="shippyproApiKey" label="ShippyPro API key" />
-              <s-text-field name="shippyproApiUrl" label="ShippyPro API URL (optional)" value={data.shippypro.apiUrl || ""} />
+
+          {data.shippypro.hasKey ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                borderRadius: 8,
+                padding: "12px 16px",
+                marginBottom: 20,
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
               <div>
-                <button type="submit" className="returbo-btn-primary">Save connection</button>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>
+                  ShippyPro Connected
+                </div>
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#15803d" }}>
+                  API key is saved ({data.shippypro.hint || "****"}). Automated label generation is active.
+                </p>
               </div>
-            </s-stack>
-          </Form>
-        </div>
-
-        <div className="returbo-card">
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">ShippyPro carriers</h2>
-            <p className="returbo-card-subtitle">Synchronize available shipping carriers configured in your ShippyPro account.</p>
-          </div>
-          <Form method="post">
-            <input type="hidden" name="_action" value="sync_carriers" />
-            <div>
-              <button type="submit" className="returbo-btn-primary">Re-sync carriers</button>
             </div>
-          </Form>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: "#fffbeb",
+                border: "1px solid #fef3c7",
+                borderRadius: 8,
+                padding: "12px 16px",
+                marginBottom: 20,
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#92400e" }}>
+                  No per-shop key saved
+                </div>
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#b45309" }}>
+                  Using <code>SHIPPYPRO_API_KEY</code> env fallback. Enter a custom key below to configure a dedicated connection.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <fetcher.Form method="post">
+            <input type="hidden" name="_action" value="save_shippypro_key" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 20 }}>
+              <div>
+                <label htmlFor="shippyproApiKey" style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                  ShippyPro API key <span style={{ color: "#de4066" }}>*</span>
+                </label>
+                <input
+                  id="shippyproApiKey"
+                  type="password"
+                  name="shippyproApiKey"
+                  placeholder={data.shippypro.hasKey ? "Enter new API key to replace current" : "Enter your ShippyPro API key"}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38 }}
+                />
+                <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                  Generate your API key in ShippyPro &gt; Integrations &gt; API.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="shippyproApiUrl" style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                  ShippyPro API URL <span style={{ color: "#64748b", fontWeight: 400 }}>(optional)</span>
+                </label>
+                <input
+                  id="shippyproApiUrl"
+                  type="text"
+                  name="shippyproApiUrl"
+                  defaultValue={data.shippypro.apiUrl || ""}
+                  placeholder="https://www.shippypro.com/api"
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38 }}
+                />
+                <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                  Leave empty to use default production endpoint.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                type="submit"
+                className="returbo-btn-primary"
+                disabled={fetcher.state === "submitting"}
+                style={{
+                  backgroundColor: "#de4066",
+                  borderColor: "#de4066",
+                  borderRadius: 6,
+                  padding: "9px 20px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {fetcher.state === "submitting" ? "Saving..." : "Save connection"}
+              </button>
+              {fetcher.data?.message === "ShippyPro connection saved" && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  ShippyPro connection saved
+                </span>
+              )}
+            </div>
+          </fetcher.Form>
+        </div>
+
+        {/* ShippyPro carriers */}
+        <div className="returbo-card" style={{ marginBottom: 22 }}>
+          <div className="returbo-card-header" style={{ marginBottom: 18, paddingBottom: 0, borderBottom: "none" }}>
+            <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
+              ShippyPro carriers
+            </h2>
+            <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+              Synchronize available shipping carriers configured in your ShippyPro account.
+            </p>
+          </div>
+
+          {data.carriers && data.carriers.length > 0 ? (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
+                  Synchronized Carriers ({data.carriers.length})
+                </span>
+                {data.carriers[0]?.syncedAt && (
+                  <span style={{ fontSize: 11.5, color: "#64748b" }}>
+                    Last synced: {new Date(data.carriers[0].syncedAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                {data.carriers.map((c: any) => (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 14px",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 6,
+                      background: "#f8fafc",
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#de4066" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <rect x="1" y="3" width="15" height="13" />
+                      <polygon points="16 8 20 8 23 11 23 16 16 16 8" />
+                      <circle cx="5.5" cy="18.5" r="2.5" />
+                      <circle cx="18.5" cy="18.5" r="2.5" />
+                    </svg>
+                    <div style={{ overflow: "hidden" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                        {c.name}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "#64748b" }}>
+                        ID: <code style={{ color: "#334155" }}>{c.shippyproCarrierId}</code>{c.service ? ` • ${c.service}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: 8,
+                padding: "14px 16px",
+                marginBottom: 18,
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <rect x="1" y="3" width="15" height="13" />
+                <polygon points="16 8 20 8 23 11 23 16 16 16 8" />
+                <circle cx="5.5" cy="18.5" r="2.5" />
+                <circle cx="18.5" cy="18.5" r="2.5" />
+              </svg>
+              <p style={{ margin: 0, fontSize: 12.5, color: "#475569", lineHeight: 1.5 }}>
+                No carriers synchronized yet. Click <strong>Re-sync carriers</strong> below to fetch your active carriers from ShippyPro.
+              </p>
+            </div>
+          )}
+
+          <fetcher.Form method="post">
+            <input type="hidden" name="_action" value="sync_carriers" />
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                type="submit"
+                className="returbo-btn-primary"
+                disabled={fetcher.state === "submitting"}
+                style={{
+                  backgroundColor: "#de4066",
+                  borderColor: "#de4066",
+                  borderRadius: 6,
+                  padding: "9px 20px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                }}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+                <span>{fetcher.state === "submitting" ? "Syncing..." : "Re-sync carriers"}</span>
+              </button>
+
+              {fetcher.data?.message?.startsWith("Carriers synced") && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  {fetcher.data.message}
+                </span>
+              )}
+            </div>
+          </fetcher.Form>
         </div>
 
         <div className="returbo-card">
-          <div className="returbo-card-header">
-            <h2 className="returbo-card-title">Return labels and routing</h2>
-            <p className="returbo-card-subtitle">Choose when labels are created and configure each destination and fallback carrier by shipping country.</p>
+          <div className="returbo-card-header" style={{ marginBottom: 18, paddingBottom: 0, borderBottom: "none" }}>
+            <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
+              Return labels and routing
+            </h2>
+            <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+              Choose when labels are created and configure each destination and carrier by shipping country.
+            </p>
           </div>
-          <Form method="post">
+
+          <fetcher.Form method="post">
             <input type="hidden" name="_action" value="save_routing_settings" />
-            <s-stack direction="block" gap="base">
+
+            {/* Market Selection Tabs */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #f1f5f9" }}>
               {ROUTING_MARKETS.map((market) => {
-                const address = data.settings.warehouseAddressesPerMarket[market] || {};
-                const method = data.settings.defaultReturnMethodPerMarket[market] || {};
+                const isSelected = selectedRoutingMarket === market;
+                const info = MARKET_INFO[market];
                 return (
-                  <fieldset key={market} style={{ border: "1px solid var(--returbo-border)", borderRadius: 8, padding: 16 }}>
-                    <legend style={{ fontWeight: 600, padding: "0 6px" }}>{market === "DEFAULT" ? "Default fallback" : `${market} shipping country`}</legend>
-                    <s-stack direction="block" gap="base">
-                      <s-select name={`labelTiming_${market}`} label="Label generation timing" value={data.settings.labelTimingPerMarket[market] || "after_approval"}>
-                        <s-option value="after_approval">After admin approval</s-option>
-                        <s-option value="immediate">Immediately after request</s-option>
-                      </s-select>
-                      <s-text-field name={`carrierId_${market}`} label="Fallback ShippyPro Carrier ID" value={method.carrierId || ""} />
-                      <s-text-field name={`service_${market}`} label="Fallback carrier service" value={method.service || ""} />
-                      <s-text-field name={`name_${market}`} label="Return warehouse name" value={address.name || ""} />
-                      <s-text-field name={`company_${market}`} label="Company" value={address.company || ""} />
-                      <s-text-field name={`address1_${market}`} label="Address" value={address.address1 || address.address || ""} />
-                      <s-text-field name={`address2_${market}`} label="Address line 2" value={address.address2 || ""} />
-                      <s-text-field name={`city_${market}`} label="City" value={address.city || ""} />
-                      <s-text-field name={`zip_${market}`} label="Postal code" value={address.zip || ""} />
-                      <s-text-field name={`country_${market}`} label="Country" value={address.country || ""} />
-                    </s-stack>
-                  </fieldset>
+                  <button
+                    key={market}
+                    type="button"
+                    onClick={() => setSelectedRoutingMarket(market)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontWeight: isSelected ? 600 : 500,
+                      border: isSelected ? "1.5px solid #de4066" : "1px solid #e2e8f0",
+                      background: isSelected ? "#fff0f3" : "#ffffff",
+                      color: isSelected ? "#de4066" : "#475569",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <span style={{ fontSize: 16, lineHeight: 1 }}>{info.flag}</span>
+                    <span>{info.label}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        padding: "1px 6px",
+                        borderRadius: 4,
+                        background: isSelected ? "rgba(222, 64, 102, 0.12)" : "#f1f5f9",
+                        color: isSelected ? "#de4066" : "#64748b",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {info.badge}
+                    </span>
+                  </button>
                 );
               })}
-              <div style={{ width: "fit-content" }}>
-                <button type="submit" className="returbo-btn-primary">Save return routing</button>
-              </div>
-            </s-stack>
-          </Form>
+            </div>
+
+            {/* Markets Panels (All kept in DOM for form submission) */}
+            {ROUTING_MARKETS.map((market) => {
+              const address = data.settings.warehouseAddressesPerMarket[market] || {};
+              const method = data.settings.defaultReturnMethodPerMarket[market] || {};
+              const info = MARKET_INFO[market];
+              const isVisible = selectedRoutingMarket === market;
+
+              return (
+                <div key={market} style={{ display: isVisible ? "block" : "none" }}>
+                  {/* Market info banner */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: "12px 16px",
+                      marginBottom: 18,
+                    }}
+                  >
+                    <span style={{ fontSize: 24, lineHeight: 1 }}>{info.flag}</span>
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>{info.label}</span>
+                        <span className="returbo-badge returbo-badge-pink" style={{ fontSize: 11 }}>{info.badge}</span>
+                      </div>
+                      <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>{info.description}</p>
+                    </div>
+                  </div>
+
+                  {/* Section 1: Label Timing & Carrier */}
+                  <div
+                    style={{
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: "18px 20px",
+                      marginBottom: 18,
+                      background: "#ffffff",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#de4066" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="1" y="3" width="15" height="13" />
+                        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
+                        <circle cx="5.5" cy="18.5" r="2.5" />
+                        <circle cx="18.5" cy="18.5" r="2.5" />
+                      </svg>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: "#1e293b" }}>
+                          Label generation & carrier
+                        </h3>
+                        <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>
+                          Configure when labels are triggered and which carrier settings to apply.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
+                      <div>
+                        <label htmlFor={`labelTiming_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                          Label generation timing
+                        </label>
+                        <select
+                          id={`labelTiming_${market}`}
+                          name={`labelTiming_${market}`}
+                          defaultValue={data.settings.labelTimingPerMarket[market] || "after_approval"}
+                          className="returbo-detail-input"
+                          style={{ width: "100%", height: 38 }}
+                        >
+                          <option value="after_approval">After admin approval (Recommended)</option>
+                          <option value="immediate">Immediately after request</option>
+                        </select>
+                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                          Choose whether labels are auto-generated or hold for review.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label htmlFor={`carrierId_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                          ShippyPro carrier ID
+                        </label>
+                        <input
+                          id={`carrierId_${market}`}
+                          type="text"
+                          name={`carrierId_${market}`}
+                          defaultValue={method.carrierId || ""}
+                          placeholder="e.g. 101, DHL, UPS"
+                          className="returbo-detail-input"
+                          style={{ width: "100%", height: 38 }}
+                        />
+                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                          Carrier ID from your ShippyPro connected carriers.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label htmlFor={`service_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                          Carrier service
+                        </label>
+                        <input
+                          id={`service_${market}`}
+                          type="text"
+                          name={`service_${market}`}
+                          defaultValue={method.service || ""}
+                          placeholder="e.g. Standard, Express, Return"
+                          className="returbo-detail-input"
+                          style={{ width: "100%", height: 38 }}
+                        />
+                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                          Rate or service code (e.g. Express, Ground).
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 2: Destination Warehouse Address */}
+                  <div
+                    style={{
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: "18px 20px",
+                      background: "#ffffff",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#de4066" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                        <circle cx="12" cy="10" r="3" />
+                      </svg>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: "#1e293b" }}>
+                          Return destination warehouse address
+                        </h3>
+                        <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>
+                          The shipping address printed on return labels for orders in this country.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      {/* Row 1: Contact Name and Company */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+                        <div>
+                          <label htmlFor={`name_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            Warehouse / Contact name
+                          </label>
+                          <input
+                            id={`name_${market}`}
+                            type="text"
+                            name={`name_${market}`}
+                            defaultValue={address.name || ""}
+                            placeholder="e.g. Return Warehouse Manager"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label htmlFor={`company_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            Company
+                          </label>
+                          <input
+                            id={`company_${market}`}
+                            type="text"
+                            name={`company_${market}`}
+                            defaultValue={address.company || ""}
+                            placeholder="e.g. Grand Le Mar"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 2: Street Address */}
+                      <div>
+                        <label htmlFor={`address1_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                          Street address
+                        </label>
+                        <input
+                          id={`address1_${market}`}
+                          type="text"
+                          name={`address1_${market}`}
+                          defaultValue={address.address1 || address.address || ""}
+                          placeholder="e.g. Kungsgatan 12"
+                          className="returbo-detail-input"
+                          style={{ width: "100%", height: 38 }}
+                        />
+                      </div>
+
+                      {/* Row 3: Address line 2 */}
+                      <div>
+                        <label htmlFor={`address2_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                          Address line 2 (optional)
+                        </label>
+                        <input
+                          id={`address2_${market}`}
+                          type="text"
+                          name={`address2_${market}`}
+                          defaultValue={address.address2 || ""}
+                          placeholder="e.g. Building B, Dock 4"
+                          className="returbo-detail-input"
+                          style={{ width: "100%", height: 38 }}
+                        />
+                      </div>
+
+                      {/* Row 4: City, Postal code, Country */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
+                        <div>
+                          <label htmlFor={`city_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            City
+                          </label>
+                          <input
+                            id={`city_${market}`}
+                            type="text"
+                            name={`city_${market}`}
+                            defaultValue={address.city || ""}
+                            placeholder="e.g. Stockholm"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label htmlFor={`zip_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            Postal code
+                          </label>
+                          <input
+                            id={`zip_${market}`}
+                            type="text"
+                            name={`zip_${market}`}
+                            defaultValue={address.zip || ""}
+                            placeholder="e.g. 111 43"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label htmlFor={`country_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            Country
+                          </label>
+                          <input
+                            id={`country_${market}`}
+                            type="text"
+                            name={`country_${market}`}
+                            defaultValue={address.country || (market === "DEFAULT" ? "" : market)}
+                            placeholder="e.g. Sweden, SE, US"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Bottom Save Action Bar */}
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 22, paddingTop: 18, borderTop: "1px solid #f1f5f9" }}>
+              <button
+                type="submit"
+                className="returbo-btn-primary"
+                disabled={fetcher.state === "submitting"}
+                style={{
+                  backgroundColor: "#de4066",
+                  borderColor: "#de4066",
+                  borderRadius: 6,
+                  padding: "9px 22px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {fetcher.state === "submitting" ? "Saving..." : "Save return routing"}
+              </button>
+              {fetcher.data?.message === "Return routing settings saved" && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Return routing settings saved
+                </span>
+              )}
+            </div>
+          </fetcher.Form>
         </div>
       </div>
     </SettingsLayout>
