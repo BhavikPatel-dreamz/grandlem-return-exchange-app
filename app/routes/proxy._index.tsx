@@ -11,7 +11,7 @@ import {
   readProxyContext,
   type ProxyContext,
   type ProxyLang,
-} from "../services/proxy-returns-html.server";
+} from "../services/proxy-returns-html";
 import {
   checkRateLimit,
   listCustomerOrders,
