@@ -19,7 +19,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const dateFrom = url.searchParams.get("dateFrom")?.trim() || "";
   const dateTo = url.searchParams.get("dateTo")?.trim() || "";
   const market = url.searchParams.get("market")?.trim() || "";
-  const lang = url.searchParams.get("lang")?.trim() || "en";
+  const lang = "en";
 
   const where: any = { shop };
   if (status) {
@@ -108,7 +108,7 @@ function EmptyReturnsIllustration() {
 export default function ReturnsListPage() {
   const data = useLoaderData<typeof loader>();
   const currentStatus = data.filters.status || "";
-  const dateLocale = data.lang === "sv" ? "sv-SE" : "en-GB";
+  const dateLocale = "en-GB";
   const formatDate = (date: string | Date) => new Intl.DateTimeFormat(dateLocale).format(new Date(date));
 
   const pills = [

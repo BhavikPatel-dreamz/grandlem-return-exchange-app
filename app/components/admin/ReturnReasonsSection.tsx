@@ -6,7 +6,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 export type ReturnReasonData = {
   id: string;
   labelEn: string;
-  labelSv?: string | null;
+  parentLabel?: string;
   appliesTo: string;
   active: boolean;
   sortOrder: number;
@@ -16,8 +16,7 @@ type ReturnReasonsSectionProps = {
   reasons: ReturnReasonData[];
 };
 
-const getParentLabel = (reason: ReturnReasonData) =>
-  reason.labelSv?.startsWith("parent:") ? reason.labelSv.slice("parent:".length).trim() : "";
+const getParentLabel = (reason: ReturnReasonData) => reason.parentLabel ?? "";
 
 export function ReturnReasonsSection({ reasons }: ReturnReasonsSectionProps) {
   const fetcher = useFetcher<any>();
@@ -43,7 +42,10 @@ export function ReturnReasonsSection({ reasons }: ReturnReasonsSectionProps) {
 
   // Deduplicate reasons by normalized labelEn to prevent duplicate UI entries
   const uniqueReasons = reasons.filter(
-    (r, idx, arr) => idx === arr.findIndex((t) => t.labelEn.toLowerCase().trim() === r.labelEn.toLowerCase().trim())
+    (r, idx, arr) => idx === arr.findIndex((t) =>
+      t.labelEn.toLowerCase().trim() === r.labelEn.toLowerCase().trim() &&
+      getParentLabel(t) === getParentLabel(r)
+    )
   );
 
   // 3-dots dropdown menu state
@@ -660,9 +662,9 @@ export function ReturnReasonsSection({ reasons }: ReturnReasonsSectionProps) {
                                         setCodeEditReason({
                                           id: r.id,
                                           label: r.labelEn,
-                                          currentCode: r.labelSv?.replace(/^parent:.*$/, "") || "",
+                                          currentCode: "",
                                         });
-                                        setCodeValue(r.labelSv?.replace(/^parent:.*$/, "") || "");
+                                        setCodeValue("");
                                       }}
                                       className="returbo-reason-menu-item"
                                     >
@@ -883,9 +885,9 @@ export function ReturnReasonsSection({ reasons }: ReturnReasonsSectionProps) {
                                       setCodeEditReason({
                                         id: r.id,
                                         label: r.labelEn,
-                                        currentCode: r.labelSv || "",
+                                        currentCode: "",
                                       });
-                                      setCodeValue(r.labelSv || "");
+                                      setCodeValue("");
                                     }}
                                     className="returbo-reason-menu-item"
                                   >

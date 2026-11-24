@@ -41,7 +41,7 @@ export type PortalOrderResult = {
   eligibleLineItemIds: string[];
   deadline: string;
   requestType: "return" | "exchange" | "complaint";
-  reasons: { id: string; labelEn: string; labelSv: string; appliesTo: string }[];
+  reasons: { id: string; labelEn: string; parentLabel?: string; appliesTo: string }[];
 };
 
 export type PortalError = { ok: false; code: PortalErrorCode; message: string };
@@ -210,7 +210,7 @@ async function validateOrderNode(
 
   const deadline = await getEffectiveDeadline(shop, shopifyOrderId, requestType, new Date(node.createdAt));
   if (isExpired(deadline)) {
-    return { ok: false, code: "DEADLINE_EXPIRED", message: "Return/exchange/complaint deadline has expired." };
+    return { ok: false, code: "DEADLINE_EXPIRED", message: "Request deadline has expired." };
   }
 
   // ensure settings exist for shop (side effect ok)
@@ -459,7 +459,6 @@ export async function lookupAndValidateOrderBasic(
     reasons: allReasons.map((r) => ({
       id: r.id,
       labelEn: r.labelEn,
-      labelSv: r.labelSv,
       appliesTo: r.appliesTo,
     })),
   };
@@ -528,22 +527,21 @@ export async function lookupOrderForCustomerBasic(
     reasons: allReasons.map((r) => ({
       id: r.id,
       labelEn: r.labelEn,
-      labelSv: r.labelSv,
       appliesTo: r.appliesTo,
     })),
   };
 }
 
-export function portalErrorCodeToMessage(code: PortalErrorCode, lang: "en" | "sv" = "en"): string {
-  const messages: Record<PortalErrorCode, { en: string; sv: string }> = {
-    SHOP_REQUIRED: { en: "Shop is required.", sv: "Butik krävs." },
-    RATE_LIMITED: { en: "Too many attempts. Please try again later.", sv: "För många försök. Försök igen senare." },
-    ORDER_NOT_FOUND: { en: "Order not found.", sv: "Ordern hittades inte." },
-    EMAIL_MISMATCH: { en: "Email does not match the order.", sv: "E-post matchar inte ordern." },
-    NOT_FULFILLED: { en: "Order has not been fulfilled yet.", sv: "Ordern har inte levererats ännu." },
-    DEADLINE_EXPIRED: { en: "Return deadline has expired.", sv: "Returfristen har löpt ut." },
-    ALL_ITEMS_EXCLUDED_OR_RETURNED: { en: "All items are excluded or already returned.", sv: "Alla artiklar är undantagna eller redan returnerade." },
-    INVALID_INPUT: { en: "Please fill in all required fields.", sv: "Fyll i alla obligatoriska fält." },
+export function portalErrorCodeToMessage(code: PortalErrorCode): string {
+  const messages: Record<PortalErrorCode, string> = {
+    SHOP_REQUIRED: "Shop is required.",
+    RATE_LIMITED: "Too many attempts. Please try again later.",
+    ORDER_NOT_FOUND: "Order not found.",
+    EMAIL_MISMATCH: "Email does not match the order.",
+    NOT_FULFILLED: "Order has not been fulfilled yet.",
+    DEADLINE_EXPIRED: "Return deadline has expired.",
+    ALL_ITEMS_EXCLUDED_OR_RETURNED: "All items are excluded or already returned.",
+    INVALID_INPUT: "Please fill in all required fields.",
   };
-  return messages[code][lang];
+  return messages[code];
 }

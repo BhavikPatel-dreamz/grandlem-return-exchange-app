@@ -4,7 +4,7 @@ import { lookupAndValidateOrder } from "./portal.server";
 import { createReturnRequest } from "./returns.server";
 import { sendEventEmail } from "./email.server";
 
-export async function createWithdrawal(shop: string, orderNumber: string, email: string, lang: "en" | "sv" = "en") {
+export async function createWithdrawal(shop: string, orderNumber: string, email: string) {
   const result = await lookupAndValidateOrder(shop, orderNumber, email, "return");
   if (!result.ok) throw new Error(result.code);
 
@@ -60,11 +60,11 @@ export async function createWithdrawal(shop: string, orderNumber: string, email:
     data: { acknowledgementContent: content, status: "Submitted" },
   });
 
-  await sendEventEmail(shop, "received", lang, result.order.email || email, {
+  await sendEventEmail(shop, "received", "en", result.order.email || email, {
     customerName: result.order.email || "customer",
     orderNumber: result.order.name,
     items: items.map((it) => it.title).join(", "),
   }).catch(() => null);
 
-  return { requestId: request.id, orderName: result.order.name, receivedAt, content, lang };
+  return { requestId: request.id, orderName: result.order.name, receivedAt, content };
 }

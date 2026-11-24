@@ -10,12 +10,11 @@
 export const RETURNS_PROXY_PATH = "/apps/returns";
 
 /**
- * `https://{shop}/apps/returns`, optionally with `?lang=sv`.
+ * `https://{shop}/apps/returns`
  * The myshopify domain redirects to the shop's primary domain.
  */
-export function storefrontReturnsUrl(shop: string, lang?: string | null): string {
+export function storefrontReturnsUrl(shop: string): string {
   if (!shop) return "";
   const url = new URL(RETURNS_PROXY_PATH, `https://${shop}`);
-  if (lang === "sv") url.searchParams.set("lang", "sv");
   return url.toString();
 }

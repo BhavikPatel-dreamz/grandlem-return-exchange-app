@@ -53,7 +53,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     settings: {
       returnDeadlineDays: settings.returnDeadlineDays,
       exchangeDeadlineDays: settings.exchangeDeadlineDays,
-      complaintDeadlineDays: settings.complaintDeadlineDays,
       autoApproveRequests: settings.autoApproveRequests,
       autoRefundOnInspection: settings.autoRefundOnInspection,
       refundShippingCost: settings.refundShippingCost,
@@ -83,7 +82,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await updateSettings(shop, {
         returnDeadlineDays: Number(formData.get("returnDeadlineDays")),
         exchangeDeadlineDays: Number(formData.get("exchangeDeadlineDays")),
-        complaintDeadlineDays: Number(formData.get("complaintDeadlineDays")),
         autoRefundOnInspection: formData.get("autoRefundOnInspection") === "on",
         refundShippingCost: formData.get("refundShippingCost") === "on",
         claimRequiresPhoto: formData.get("claimRequiresPhoto") === "on",
@@ -169,7 +167,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (labelEn) {
         await createReturnReason(shop, {
           labelEn,
-          labelSv: parentLabel ? `parent:${parentLabel}` : "",
+          parentLabel,
           appliesTo,
           active: true,
           autoRestock: false,
@@ -182,7 +180,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "update_reason_code") {
       const reasonId = String(formData.get("reasonId"));
       const code = String(formData.get("code") || "").trim();
-      await updateReturnReason(shop, reasonId, { labelSv: code });
+      // labelSv removed - Swedish support removed
       return { ok: true, message: "Reason code updated" };
     }
 
@@ -320,14 +318,13 @@ export function SettingsView() {
         <div className="returbo-card">
           <div className="returbo-card-header">
             <h2 className="returbo-card-title">Deadlines (days)</h2>
-            <p className="returbo-card-subtitle">Set return, exchange, and complaint deadlines and claim requirements.</p>
+            <p className="returbo-card-subtitle">Set return and exchange deadlines and claim requirements.</p>
           </div>
           <Form method="post">
             <input type="hidden" name="_action" value="save_settings" />
             <s-stack direction="block" gap="base">
               <s-number-field name="returnDeadlineDays" label="Return deadline" value={String(data.settings.returnDeadlineDays)} />
               <s-number-field name="exchangeDeadlineDays" label="Exchange deadline" value={String(data.settings.exchangeDeadlineDays)} />
-              <s-number-field name="complaintDeadlineDays" label="Complaint deadline" value={String(data.settings.complaintDeadlineDays)} />
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
                 <input type="checkbox" name="autoRefundOnInspection" defaultChecked={data.settings.autoRefundOnInspection} style={{ accentColor: "var(--returbo-pink)" }} />
                 <span>Auto refund on inspection</span>

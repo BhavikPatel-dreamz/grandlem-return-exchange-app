@@ -88,7 +88,7 @@ export async function sendEventEmail(
     || null;
   if (!tpl) return { ok: false };
   // Every template can use {{returnsUrl}}: the storefront return page (app proxy).
-  const allVars: EmailVars = { returnsUrl: storefrontReturnsUrl(shop, tpl.language), ...vars };
+  const allVars: EmailVars = { returnsUrl: storefrontReturnsUrl(shop), ...vars };
   const subject = renderTemplate(tpl.subject, allVars);
   // Always treat email body as HTML to allow HTML design from admin
   const bodyIsHtml = true;

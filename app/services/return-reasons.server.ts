@@ -2,12 +2,36 @@ import prisma from "../db.server";
 
 export type ReturnReasonInput = {
   labelEn: string;
-  labelSv?: string;
+  parentLabel?: string;
   appliesTo?: string;
   autoRestock?: boolean;
   active?: boolean;
   sortOrder?: number;
 };
+
+const SUB_REASON_PREFIX = "__glr_sub__:";
+type ReturnReasonRecord = Awaited<ReturnType<typeof prisma.returnReason.findMany>>[number];
+type ListedReturnReason = ReturnReasonRecord & { parentLabel?: string };
+
+function encodeSubReasonLabel(parentLabel: string, labelEn: string) {
+  return `${SUB_REASON_PREFIX}${encodeURIComponent(parentLabel)}:${labelEn}`;
+}
+
+function decodeReason(reason: ReturnReasonRecord): ListedReturnReason {
+  if (!reason.labelEn.startsWith(SUB_REASON_PREFIX)) return reason;
+  const separator = reason.labelEn.indexOf(":", SUB_REASON_PREFIX.length);
+  if (separator < 0) return reason;
+
+  try {
+    return {
+      ...reason,
+      labelEn: reason.labelEn.slice(separator + 1),
+      parentLabel: decodeURIComponent(reason.labelEn.slice(SUB_REASON_PREFIX.length, separator)),
+    };
+  } catch {
+    return reason;
+  }
+}
 
 export const DEFAULT_RETURN_REASONS = [
   { labelEn: "Wrong size", appliesTo: "return,exchange", active: true, autoRestock: true, sortOrder: 1 },
@@ -65,7 +89,6 @@ export async function ensureDefaultReturnReasons(shop: string) {
       data: {
         shop,
         labelEn: r.labelEn,
-        labelSv: "",
         appliesTo: r.appliesTo,
         active: r.active,
         autoRestock: r.autoRestock,
@@ -81,12 +104,20 @@ export async function listReturnReasons(shop: string, activeOnly = false) {
     orderBy: [{ sortOrder: "asc" }, { labelEn: "asc" }, { id: "asc" }],
   });
   const seen = new Set<string>();
-  return all.filter((r) => {
-    const key = r.labelEn.toLowerCase().trim();
+  const unique = all.map(decodeReason).filter((r) => {
+    const key = `${r.parentLabel ?? ""}\u0000${r.labelEn.toLowerCase().trim()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  const parents = unique.filter((r) => !r.parentLabel);
+  const children = unique.filter((r) => r.parentLabel);
+  const ordered = parents.flatMap((parent) => [
+    parent,
+    ...children.filter((child) => child.parentLabel === parent.labelEn),
+  ]);
+  const parentLabels = new Set(parents.map((r) => r.labelEn));
+  return [...ordered, ...children.filter((child) => !parentLabels.has(child.parentLabel!))];
 }
 
 export async function getReturnReason(shop: string, id: string) {
@@ -97,8 +128,9 @@ export async function createReturnReason(shop: string, input: ReturnReasonInput)
   return prisma.returnReason.create({
     data: {
       shop,
-      labelEn: input.labelEn,
-      labelSv: input.labelSv ?? "",
+      labelEn: input.parentLabel
+        ? encodeSubReasonLabel(input.parentLabel, input.labelEn)
+        : input.labelEn,
       appliesTo: input.appliesTo ?? "return,exchange,complaint",
       autoRestock: input.autoRestock ?? false,
       active: input.active ?? true,
@@ -114,7 +146,6 @@ export async function updateReturnReason(shop: string, id: string, input: Partia
     where: { id },
     data: {
       ...(input.labelEn !== undefined && { labelEn: input.labelEn }),
-      ...(input.labelSv !== undefined && { labelSv: input.labelSv }),
       ...(input.appliesTo !== undefined && { appliesTo: input.appliesTo }),
       ...(input.autoRestock !== undefined && { autoRestock: input.autoRestock }),
       ...(input.active !== undefined && { active: input.active }),

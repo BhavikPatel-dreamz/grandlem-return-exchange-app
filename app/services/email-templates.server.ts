@@ -6,7 +6,6 @@ export type EmailEvent = (typeof EMAIL_EVENTS)[number];
 export async function ensureDefaultTemplates(shop: string) {
   const defaults: { event: EmailEvent; language: string; subject: string; body: string }[] = [
     { event: "received", language: "en", subject: "We received your return request ({{orderNumber}})", body: "Hi {{customerName}},\n\nWe received your return request for order {{orderNumber}}.\n\nItems:\n{{items}}\n\nWe will review and get back to you.\n" },
-    { event: "received", language: "sv", subject: "Vi har mottagit din returförfrågan ({{orderNumber}})", body: "Hej {{customerName}},\n\nVi har mottagit din returförfrågan för order {{orderNumber}}.\n\nArtiklar:\n{{items}}\n\nVi återkommer.\n" },
     { event: "approved", language: "en", subject: "Your return request is approved ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour return request for order {{orderNumber}} is approved.\n\nLabel: {{labelLink}}\nTracking: {{trackingLink}}\n" },
     { event: "rejected", language: "en", subject: "Your return request was rejected ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour return request for order {{orderNumber}} was rejected.\nReason: {{reason}}\n" },
     { event: "payment_required", language: "en", subject: "Payment required for your exchange ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour exchange for order {{orderNumber}} requires a payment of {{amount}}.\nPay here: {{paymentLink}}\n" },

@@ -48,7 +48,13 @@ export async function saveInspection(
     });
 
     // Restock only approved, undamaged items (manual decision via inspection checkbox).
-    if (insp.restock === true && insp.condition === "OK") {
+    // Skip if restockDecision is auto or no (admin explicitly chose not to restock).
+    if (
+      insp.restock === true
+      && insp.condition === "OK"
+      && item.restockDecision !== "auto"
+      && item.restockDecision !== "no"
+    ) {
       await performRestock(shop, item.id, null, insp.approvedQuantity).catch(() => null);
     }
   }
