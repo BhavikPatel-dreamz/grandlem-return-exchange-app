@@ -93,18 +93,3 @@ export async function performRestock(
   return { ok: true };
 }
 
-export async function autoRestockForRequest(returnRequestId: string): Promise<void> {
-  const rr = await prisma.returnRequest.findUnique({
-    where: { id: returnRequestId },
-    include: { items: { include: { reason: true } } },
-  });
-  if (!rr) return;
-  if (rr.type === "complaint") return; // complaints never auto-restocked
-
-  for (const item of rr.items) {
-    if (item.reason?.autoRestock) {
-      await prisma.returnItem.update({ where: { id: item.id }, data: { restockDecision: "auto" } });
-      await performRestock(rr.shop, item.id).catch(() => null);
-    }
-  }
-}

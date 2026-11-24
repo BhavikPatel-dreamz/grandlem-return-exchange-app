@@ -38,7 +38,6 @@ model ReturnReason {
   id        String   @id @default(cuid())
   shop      String
   labelEn   String
-  labelSv   String   @default("")
   // return | exchange | complaint | any (comma list) - simplified as string
   appliesTo String   @default("return,exchange,complaint")
   autoRestock Boolean @default(false)
@@ -59,6 +58,8 @@ model Settings {
   returnDeadlineDays    Int      @default(14)
   exchangeDeadlineDays  Int      @default(14)
   complaintDeadlineDays    Int      @default(14)
+  autoApproveRequests      Boolean  @default(false)
+  emailFrom                String?
   // Phase 12: refunds
   autoRefundOnInspection Boolean @default(false)
   refundShippingCost      Boolean @default(false)
@@ -170,6 +171,7 @@ model ReturnRequest {
   carrierId     String?
   reviewFlagged Boolean  @default(false)
   countryCode String @default("")
+  fulfillmentLocationId String?
   outcome ReturnOutcome?
   // Phase 13
   requestedResolution     String?
@@ -201,6 +203,7 @@ model ReturnRequest {
   @@index([shop])
   @@index([shop, status])
   @@index([shop, shopifyOrderId])
+  @@index([shop, fulfillmentLocationId])
 }
 
 model ReturnItem {
@@ -263,6 +266,7 @@ model ReturnLabel {
   returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
   carrierId     String?
   connectionId  String?
+  shippyproOrderId String?
   service       String?
   labelUrl      String?
   qrCodeUrl     String?

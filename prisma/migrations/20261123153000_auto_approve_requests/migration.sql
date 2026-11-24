@@ -1,0 +1,1 @@
+ALTER TABLE "Settings" ADD COLUMN "autoApproveRequests" BOOLEAN NOT NULL DEFAULT false;
