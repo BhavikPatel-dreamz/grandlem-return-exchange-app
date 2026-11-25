@@ -167,22 +167,57 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
   return { ok: true, data: syncedCarriers };
 }
 
-export async function findOriginalShipment(shop: string, orderNumber: string | null) {
+export async function findOriginalShipment(
+  shop: string,
+  orderNumber: string | null,
+  submittedAt: Date,
+  lookbackDays: number,
+) {
   if (!orderNumber) return null;
-  const result = await shippyproCall("GetShippedOrders", { OrderID: orderNumber }, shop);
+  const dateMax = Math.floor(Date.now() / 1000);
+  const dateMin = Math.floor((submittedAt.getTime() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+  const result = await shippyproCall("GetShipmentsReport", {
+    DateMin: dateMin,
+    DateMax: dateMax,
+    IncludeItems: false,
+    Return: false,
+  }, shop);
   if (!result.ok) return null;
-  const list = Array.isArray(result.data?.result) ? result.data.result : result.data?.orders || [];
-  const shipment = list?.[0] ?? null;
+  const responseData = result.data?.result ?? result.data?.data ?? result.data;
+  const shipmentData = responseData?.Shipments?.additionalProperty
+    ?? responseData?.Shipments
+    ?? responseData?.shipments
+    ?? [];
+  const shipments = Array.isArray(shipmentData) ? shipmentData : [shipmentData];
+  const normalizeRef = (value: unknown) => String(value ?? "").trim().replace(/^#/, "").toLowerCase();
+  const targetOrderNumber = normalizeRef(orderNumber);
+  const shipment = shipments.find((candidate: any) => [
+    candidate.TransactionID,
+    candidate.transactionId,
+    candidate.CustomerReference,
+    candidate.customerReference,
+  ].some((reference) => normalizeRef(reference) === targetOrderNumber)) ?? null;
   if (!shipment) return null;
   const fromAddress = shipment.FromAddress ?? shipment.fromAddress ?? shipment.from_address
     ?? shipment.WarehouseAddress ?? shipment.warehouseAddress ?? shipment.warehouse_address ?? {};
+  let carrierId = shipment.CarrierID ?? shipment.carrierId ?? shipment.carrier_id;
+  const carrierName = shipment.CarrierName ?? shipment.carrierName ?? shipment.carrier_name;
+  if (!carrierId && carrierName) {
+    const syncedCarriers = await prisma.carrier.findMany({ where: { shop } });
+    carrierId = syncedCarriers.find(
+      (carrier) => carrier.name.trim().toLowerCase() === String(carrierName).trim().toLowerCase(),
+    )?.shippyproCarrierId;
+  }
   return {
     ...shipment,
+    CarrierID: carrierId,
+    CarrierName: carrierName,
+    Service: shipment.CarrierService ?? shipment.Service ?? shipment.service,
     warehouseAddress: {
       name: fromAddress.Name ?? fromAddress.name ?? shipment.WarehouseName ?? shipment.warehouseName ?? "",
       company: fromAddress.Company ?? fromAddress.company ?? "",
-      address1: fromAddress.Address1 ?? fromAddress.address1 ?? shipment.warehouseAddress1 ?? shipment.warehouse_address1 ?? "",
-      address2: fromAddress.Address2 ?? fromAddress.address2 ?? shipment.warehouseAddress2 ?? shipment.warehouse_address2 ?? "",
+      address1: fromAddress.Address1 ?? fromAddress.address1 ?? fromAddress.street1 ?? shipment.warehouseAddress1 ?? shipment.warehouse_address1 ?? "",
+      address2: fromAddress.Address2 ?? fromAddress.address2 ?? fromAddress.street2 ?? shipment.warehouseAddress2 ?? shipment.warehouse_address2 ?? "",
       city: fromAddress.City ?? fromAddress.city ?? shipment.warehouseCity ?? shipment.warehouse_city ?? "",
       zip: fromAddress.ZIP ?? fromAddress.Zip ?? fromAddress.zip ?? shipment.warehouseZip ?? shipment.warehouse_zip ?? "",
       country: fromAddress.Country ?? fromAddress.country ?? shipment.warehouseCountry ?? shipment.warehouse_country ?? shipment.warehouseCountryCode ?? "",
@@ -370,7 +405,12 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
       if (!rr) throw new Error("Return request not found");
 
       const settings = await getOrCreateSettings(rr.shop);
-      const original = await findOriginalShipment(rr.shop, rr.orderNumber);
+      const original = await findOriginalShipment(
+        rr.shop,
+        rr.orderNumber,
+        rr.submittedAt,
+        Math.max(settings.returnDeadlineDays, settings.exchangeDeadlineDays) + 60,
+      );
       const routing = routingDecision(original, settings, rr.market);
       attemptedRouting = { carrierId: routing.carrierId, service: routing.service, flagged: routing.flagged };
       if (!routing.carrierId) throw new Error("No carrier available for routing");
@@ -485,6 +525,11 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
       const labelUrl = Array.isArray(rawLabelUrl) ? rawLabelUrl.find(Boolean) : rawLabelUrl;
       const trackingNumber = data?.TrackingNumber || data?.tracking_number;
       const trackingUrl = data?.TrackingExternalLink || data?.TrackingURL || data?.tracking_url;
+
+      if (!labelUrl) {
+        lastError = "ShippyPro accepted the shipment but did not return a label URL";
+        break;
+      }
 
       await prisma.returnLabel.upsert({
         where: { returnRequestId: rr.id },
