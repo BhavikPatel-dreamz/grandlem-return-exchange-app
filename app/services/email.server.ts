@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { listEmailTemplates } from "./email-templates.server";
 import { storefrontReturnsUrl } from "./storefront-links.server";
-import { getOrCreateSettings } from "./settings.server";
+import { getOrCreateSettings, getReturnFormCustomization } from "./settings.server";
+import { wrapEmailHtml } from "./email-html";
 import { Resend } from "resend";
 
 export type EmailVars = Record<string, string | number | null | undefined>;
@@ -90,10 +91,10 @@ export async function sendEventEmail(
   // Every template can use {{returnsUrl}}: the storefront return page (app proxy).
   const allVars: EmailVars = { returnsUrl: storefrontReturnsUrl(shop), ...vars };
   const subject = renderTemplate(tpl.subject, allVars);
-  // Always treat email body as HTML to allow HTML design from admin
-  const bodyIsHtml = true;
-  const body = renderTemplate(tpl.body, allVars, bodyIsHtml);
+  const renderedBody = renderTemplate(tpl.body, allVars, true);
   const settings = await getOrCreateSettings(shop);
+  const customization = getReturnFormCustomization(settings);
+  const body = wrapEmailHtml(renderedBody, customization.storeName || "Grand Le Mar");
   const result = await sendEmail(to, subject, body, settings.emailFrom || undefined);
   return { ok: result.ok };
 }

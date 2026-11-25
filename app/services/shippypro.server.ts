@@ -257,13 +257,21 @@ async function fetchVariantCustoms(shop: string, variantIds: string[]) {
 async function notifyLabelFailure(shop: string, orderNumber: string | null, error: string) {
   try {
     const { admin } = await unauthenticated.admin(shop);
-    const response = await admin.graphql(`#graphql query { shop { email } }`);
+    const response = await admin.graphql(`#graphql
+      query LabelFailureRecipient {
+        shop {
+          email
+        }
+      }
+    `);
     const recipient = process.env.SHIPPYPRO_FAILURE_EMAIL || (await response.json())?.data?.shop?.email;
     if (!recipient) return;
+    const settings = await getOrCreateSettings(shop);
     await sendEmail(
       recipient,
       `Return label generation failed${orderNumber ? ` for ${orderNumber}` : ""}`,
       `ShippyPro could not generate a return label for ${orderNumber || "a return request"}.\n\nError: ${error}`,
+      settings.emailFrom || undefined,
     );
   } catch (e) {
     console.error("[ShippyPro] Admin failure notification could not be sent:", e);
