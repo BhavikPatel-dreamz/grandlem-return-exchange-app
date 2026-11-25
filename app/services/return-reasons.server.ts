@@ -17,7 +17,7 @@ function encodeSubReasonLabel(parentLabel: string, labelEn: string) {
   return `${SUB_REASON_PREFIX}${encodeURIComponent(parentLabel)}:${labelEn}`;
 }
 
-function decodeReason(reason: ReturnReasonRecord): ListedReturnReason {
+export function decodeReason(reason: ReturnReasonRecord): ListedReturnReason {
   if (!reason.labelEn.startsWith(SUB_REASON_PREFIX)) return reason;
   const separator = reason.labelEn.indexOf(":", SUB_REASON_PREFIX.length);
   if (separator < 0) return reason;
