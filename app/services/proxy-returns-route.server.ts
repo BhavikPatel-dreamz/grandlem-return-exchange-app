@@ -436,6 +436,7 @@ function customerOrdersCard(
       }
     });
   }
+  render();
 })();
 </script>`;
 

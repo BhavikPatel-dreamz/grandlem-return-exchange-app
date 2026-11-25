@@ -105,26 +105,7 @@ export function card(inner: string, heading?: string): string {
 }
 
 export function topBar(): string {
-  const flagSvg = `<svg class="glr-flag-svg" width="24" height="16" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="24" height="16" rx="2" fill="#B22234"/>
-        <path d="M0 2.46H24M0 4.92H24M0 7.38H24M0 9.85H24M0 12.31H24M0 14.77H24" stroke="white" stroke-width="1.23"/>
-        <rect width="9.6" height="8.62" rx="1" fill="#3C3B6E"/>
-        <circle cx="2" cy="1.8" r="0.6" fill="white"/>
-        <circle cx="4.8" cy="1.8" r="0.6" fill="white"/>
-        <circle cx="7.6" cy="1.8" r="0.6" fill="white"/>
-        <circle cx="3.4" cy="4.3" r="0.6" fill="white"/>
-        <circle cx="6.2" cy="4.3" r="0.6" fill="white"/>
-        <circle cx="2" cy="6.8" r="0.6" fill="white"/>
-        <circle cx="4.8" cy="6.8" r="0.6" fill="white"/>
-        <circle cx="7.6" cy="6.8" r="0.6" fill="white"/>
-      </svg>`;
-
-  return `<div class="glr-topbar">
-  <div class="glr-locale-static">
-    ${flagSvg}
-    <span>English</span>
-  </div>
-</div>`;
+  return "";
 }
 
 export function orderFooter(): string {
