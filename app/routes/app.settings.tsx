@@ -788,23 +788,35 @@ export function SettingsView() {
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                background: "#f0fdf4",
-                border: "1px solid #bbf7d0",
+                background: data.carriers.length > 0 ? "#f0fdf4" : "#fffbeb",
+                border: `1px solid ${data.carriers.length > 0 ? "#bbf7d0" : "#fef3c7"}`,
                 borderRadius: 8,
                 padding: "12px 16px",
                 marginBottom: 20,
               }}
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                <polyline points="22 4 12 14.01 9 11.01" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={data.carriers.length > 0 ? "#16a34a" : "#d97706"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                {data.carriers.length > 0 ? (
+                  <>
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </>
+                ) : (
+                  <>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </>
+                )}
               </svg>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>
-                  ShippyPro Connected
+                <div style={{ fontSize: 13, fontWeight: 700, color: data.carriers.length > 0 ? "#166534" : "#92400e" }}>
+                  {data.carriers.length > 0 ? "ShippyPro Ready" : "API key saved; no carriers synced"}
                 </div>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#15803d" }}>
-                  API key is saved ({data.shippypro.hint || "****"}). Automated label generation is active.
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: data.carriers.length > 0 ? "#15803d" : "#b45309" }}>
+                  {data.carriers.length > 0
+                    ? `API key is saved (${data.shippypro.hint || "****"}). ${data.carriers.length} carrier(s) synced; label generation is ready.`
+                    : `API key is saved (${data.shippypro.hint || "****"}), but no carrier is synced. Connect a carrier in ShippyPro, then re-sync.`}
                 </p>
               </div>
             </div>
@@ -866,12 +878,12 @@ export function SettingsView() {
                   type="text"
                   name="shippyproApiUrl"
                   defaultValue={data.shippypro.apiUrl || ""}
-                  placeholder="https://www.shippypro.com/api"
+                  placeholder="https://api.shippypro.com/v1"
                   className="returbo-detail-input"
                   style={{ width: "100%", height: 38 }}
                 />
                 <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                  Leave empty to use default production endpoint.
+                  Leave empty to use the ShippyPro v1 production endpoint.
                 </p>
               </div>
             </div>

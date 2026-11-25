@@ -5,7 +5,8 @@ import { getOrCreateSettings, parseJson } from "./settings.server";
 import { decryptSecret, encryptSecret } from "./crypto.server";
 import { sendEmail } from "./email.server";
 
-const DEFAULT_SHIPPYPRO_URL = "https://www.shippypro.com/api";
+const DEFAULT_SHIPPYPRO_URL = "https://api.shippypro.com/v1";
+const LEGACY_SHIPPYPRO_URL = "https://www.shippypro.com/api";
 
 export type ShippyProResult = { ok: boolean; data?: any; error?: string };
 
@@ -36,12 +37,16 @@ async function resolveShippyProApiUrl(shop?: string | null): Promise<string> {
   if (shop) {
     try {
       const settings = await getOrCreateSettings(shop);
-      if (settings.shippyproApiUrl) return settings.shippyproApiUrl;
+      if (settings.shippyproApiUrl) {
+        const savedUrl = settings.shippyproApiUrl.trim().replace(/\/+$/, "");
+        return savedUrl === LEGACY_SHIPPYPRO_URL ? DEFAULT_SHIPPYPRO_URL : savedUrl;
+      }
     } catch {
       // fall back to env
     }
   }
-  return process.env.SHIPPYPRO_API_URL || DEFAULT_SHIPPYPRO_URL;
+  const envUrl = process.env.SHIPPYPRO_API_URL?.trim().replace(/\/+$/, "");
+  return envUrl === LEGACY_SHIPPYPRO_URL ? DEFAULT_SHIPPYPRO_URL : envUrl || DEFAULT_SHIPPYPRO_URL;
 }
 
 export async function shippyproCall(method: string, params: Record<string, unknown> = {}, shop?: string | null): Promise<ShippyProResult> {
@@ -52,17 +57,26 @@ export async function shippyproCall(method: string, params: Record<string, unkno
   try {
     const apiUrl = await resolveShippyProApiUrl(shop);
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(apiUrl, {
+      const res = await fetch(`${apiUrl}/${method}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method, params, key: apiKey }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ Method: method, Params: params }),
       });
       if (res.status === 429 && attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, retryAfterMs(res.headers.get("Retry-After"), attempt)));
         continue;
       }
       const json = await res.json();
-      if (json?.error) return { ok: false, error: String(json.error), data: json };
+      if (json?.error || (json?.Result && String(json.Result).toUpperCase() !== "OK")) {
+        return {
+          ok: false,
+          error: String(json.ErrorMessage || json.error || json.Result),
+          data: json,
+        };
+      }
       if (!res.ok) return { ok: false, error: `ShippyPro HTTP ${res.status}`, data: json };
       return { ok: true, data: json };
     }
@@ -76,51 +90,81 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
   const result = await shippyproCall("GetCarriers", {}, shop);
   if (!result.ok) return result;
 
-  const carriers = Array.isArray(result.data?.result) ? result.data.result : result.data?.carriers || [];
+  const responseData = result.data?.result ?? result.data?.data ?? result.data;
+  const carrierData = responseData?.Carriers?.additionalProperty
+    ?? responseData?.Carriers?.additionalProperties
+    ?? responseData?.Carriers
+    ?? responseData?.carriers
+    ?? responseData?.result
+    ?? responseData;
+  const carriers = Array.isArray(carrierData)
+    ? carrierData
+    : carrierData && typeof carrierData === "object"
+      ? [carrierData]
+      : [];
+  const syncedCarriers = [];
   for (const c of carriers) {
     const connectionId = String(c.CarrierID ?? c.id ?? c.carrier_id ?? "");
     if (!connectionId) continue;
+    const services = Array.from(new Set([
+      c.CarrierService,
+      ...(Array.isArray(c.ServicesList) ? c.ServicesList : []),
+      c.Service,
+      c.service,
+    ].filter(Boolean).map(String)));
+    const primaryService = services[0] ?? null;
+    const carrierName = String(c.Label ?? c.CarrierName ?? c.name ?? connectionId);
     await prisma.carrier.upsert({
       where: { shop_shippyproCarrierId: { shop, shippyproCarrierId: connectionId } },
       create: {
         shop,
         shippyproCarrierId: connectionId,
-        name: String(c.CarrierName ?? c.name ?? connectionId),
-        service: c.Service ?? c.service ?? null,
+        name: carrierName,
+        service: primaryService,
         meta: JSON.stringify(c),
         syncedAt: new Date(),
       },
       update: {
-        name: String(c.CarrierName ?? c.name ?? connectionId),
-        service: c.Service ?? c.service ?? null,
+        name: carrierName,
+        service: primaryService,
         meta: JSON.stringify(c),
         syncedAt: new Date(),
       },
     });
 
-    await prisma.courierService.upsert({
-      where: { shop_shippyproCarrierId_service: { shop, shippyproCarrierId: connectionId, service: c.Service ?? c.service ?? null } },
-      create: {
-        shop,
-        shippyproCarrierId: connectionId,
-        service: c.Service ?? c.service ?? null,
-        supportsReturns: true,
-        supportsPickup: Boolean(c.Pickup ?? c.pickup ?? c.supportsPickup),
-        supportsQr: Boolean(c.QR ?? c.qr ?? c.supportsQr),
-        supportsDropoff: Boolean(c.Dropoff ?? c.dropoff ?? true),
-        meta: JSON.stringify(c),
-        syncedAt: new Date(),
-      },
-      update: {
-        supportsPickup: Boolean(c.Pickup ?? c.pickup ?? c.supportsPickup),
-        supportsQr: Boolean(c.QR ?? c.qr ?? c.supportsQr),
-        supportsDropoff: Boolean(c.Dropoff ?? c.dropoff ?? true),
-        meta: JSON.stringify(c),
-        syncedAt: new Date(),
-      },
-    });
+    for (const service of services) {
+      await prisma.courierService.upsert({
+        where: { shop_shippyproCarrierId_service: { shop, shippyproCarrierId: connectionId, service } },
+        create: {
+          shop,
+          shippyproCarrierId: connectionId,
+          service,
+          supportsReturns: true,
+          supportsPickup: Boolean(c.Pickup ?? c.pickup ?? c.supportsPickup),
+          supportsQr: Boolean(c.QR ?? c.qr ?? c.supportsQr),
+          supportsDropoff: Boolean(c.Dropoff ?? c.dropoff ?? true),
+          meta: JSON.stringify(c),
+          syncedAt: new Date(),
+        },
+        update: {
+          supportsPickup: Boolean(c.Pickup ?? c.pickup ?? c.supportsPickup),
+          supportsQr: Boolean(c.QR ?? c.qr ?? c.supportsQr),
+          supportsDropoff: Boolean(c.Dropoff ?? c.dropoff ?? true),
+          meta: JSON.stringify(c),
+          syncedAt: new Date(),
+        },
+      });
+    }
+    syncedCarriers.push({ ...c, CarrierID: connectionId });
   }
-  return { ok: true, data: carriers };
+  if (syncedCarriers.length === 0) {
+    return {
+      ok: false,
+      error: "ShippyPro returned no carriers with a CarrierID. Connect a carrier in ShippyPro, then re-sync.",
+      data: result.data,
+    };
+  }
+  return { ok: true, data: syncedCarriers };
 }
 
 export async function findOriginalShipment(shop: string, orderNumber: string | null) {
@@ -157,7 +201,7 @@ export async function fetchOrderShippingAddress(shop: string, shopifyOrderId: st
       query getOrderShipping($id: ID!) {
         order(id: $id) {
           shippingAddress {
-            name address1 address2 city zip country phone
+            name address1 address2 city zip country countryCodeV2 province provinceCode phone
           }
           email
         }
@@ -165,13 +209,16 @@ export async function fetchOrderShippingAddress(shop: string, shopifyOrderId: st
       { variables: { id } },
     );
     const json = await response.json();
-    return json?.data?.order?.shippingAddress ?? null;
+    const address = json?.data?.order?.shippingAddress;
+    return address
+      ? { ...address, country: address.countryCodeV2 || address.country, state: address.provinceCode || address.province }
+      : null;
   } catch {
     return null;
   }
 }
 
-async function fetchOrderLineItemValues(shop: string, shopifyOrderId: string): Promise<Map<string, number>> {
+async function fetchOrderLineItemValues(shop: string, shopifyOrderId: string): Promise<{ values: Map<string, number>; currencyCode: string | null }> {
   const values = new Map<string, number>();
   try {
     const { admin } = await unauthenticated.admin(shop);
@@ -180,6 +227,7 @@ async function fetchOrderLineItemValues(shop: string, shopifyOrderId: string): P
       `#graphql
       query getReturnItemValues($id: ID!) {
         order(id: $id) {
+          currencyCode
           lineItems(first: 250) {
             edges {
               node {
@@ -192,16 +240,17 @@ async function fetchOrderLineItemValues(shop: string, shopifyOrderId: string): P
       }`,
       { variables: { id } },
     );
-    const lines = (await response.json())?.data?.order?.lineItems?.edges ?? [];
+    const order = (await response.json())?.data?.order;
+    const lines = order?.lineItems?.edges ?? [];
     for (const edge of lines) {
       const lineId = edge.node?.id;
       const amount = Number(edge.node?.discountedUnitPriceSet?.shopMoney?.amount);
       if (lineId && Number.isFinite(amount)) values.set(lineId, amount);
     }
+    return { values, currencyCode: order?.currencyCode ?? lines[0]?.node?.discountedUnitPriceSet?.shopMoney?.currencyCode ?? null };
   } catch {
-    return values;
+    return { values, currencyCode: null };
   }
-  return values;
 }
 
 async function fetchWarehouseAddress(shop: string, locationId: string | null): Promise<Record<string, string> | null> {
@@ -214,7 +263,7 @@ async function fetchWarehouseAddress(shop: string, locationId: string | null): P
         location(id: $id) {
           name
           address {
-            address1 address2 city zip country phone
+            address1 address2 city zip country countryCode province provinceCode phone
           }
         }
       }`,
@@ -222,7 +271,12 @@ async function fetchWarehouseAddress(shop: string, locationId: string | null): P
     );
     const location = (await response.json())?.data?.location;
     if (!location?.address) return null;
-    return { name: location.name || "Warehouse", ...location.address };
+    return {
+      name: location.name || "Warehouse",
+      ...location.address,
+      country: location.address.countryCode || location.address.country,
+      state: location.address.provinceCode || location.address.province,
+    };
   } catch {
     return null;
   }
@@ -326,6 +380,11 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
         where: { shop_shippyproCarrierId: { shop: rr.shop, shippyproCarrierId: routing.carrierId } },
       });
       attemptedCarrierRecordId = carrier?.id ?? null;
+      const carrierName = carrier?.name || original?.CarrierName || original?.carrierName;
+      const carrierId = Number(routing.carrierId);
+      if (!Number.isInteger(carrierId) || !carrierName) {
+        throw new Error("Sync the selected ShippyPro carrier before generating a return label.");
+      }
 
       const warehouseMap = parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {});
       const marketKey = (rr.market || "DEFAULT").toUpperCase();
@@ -343,7 +402,7 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
       }
 
       const shippingAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
-      const itemValues = await fetchOrderLineItemValues(rr.shop, rr.shopifyOrderId || "");
+      const { values: itemValues, currencyCode } = await fetchOrderLineItemValues(rr.shop, rr.shopifyOrderId || "");
       const isSweden = ["SE", "SWEDEN"].includes(String(warehouse.country || "").toUpperCase());
       const variantCustoms = isSweden
         ? await fetchVariantCustoms(rr.shop, [...new Set(rr.items.map((item) => item.variantId).filter(Boolean) as string[])])
@@ -367,33 +426,54 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
         if (attemptedRouting) attemptedRouting.flagged = true;
         throw new Error("Sweden return customs requires an HS code and country of origin for every item");
       }
+      if (isSweden && !currencyCode) {
+        throw new Error("Order currency is unavailable for the customs declaration.");
+      }
 
       const params = {
-        CarrierID: routing.carrierId,
-        Service: routing.service,
+        CarrierID: carrierId,
+        CarrierName: carrierName,
+        CarrierService: routing.service || carrier?.service || undefined,
         IsReturn: true,
-        OrderID: rr.orderNumber || rr.shopifyOrderId,
-        ToAddress: {
-          Name: (warehouse["name"] as string) || "Warehouse",
-          Company: warehouse["company"] || "",
-          Address1: warehouse["address1"] || warehouse["address"] || "",
-          Address2: warehouse["address2"] || "",
-          City: warehouse["city"] || "",
-          ZIP: warehouse["zip"] || "",
-          Country: warehouse["country"] || "",
+        TransactionID: rr.orderNumber || rr.shopifyOrderId,
+        Async: false,
+        ContentDescription: rr.items.map((item) => item.title || "Returned item").join(", "),
+        to_address: {
+          name: (warehouse["name"] as string) || "Warehouse",
+          company: warehouse["company"] || "",
+          street1: warehouse["address1"] || warehouse["address"] || "",
+          street2: warehouse["address2"] || "",
+          city: warehouse["city"] || "",
+          state: warehouse["state"] || warehouse["province"] || "",
+          zip: warehouse["zip"] || "",
+          country: warehouse["country"] || "",
+          phone: warehouse["phone"] || "",
+          email: "",
         },
-        FromAddress: {
-          Name: shippingAddress?.name || rr.customerName || "Customer",
-          Address1: shippingAddress?.address1 || "",
-          Address2: shippingAddress?.address2 || "",
-          City: shippingAddress?.city || "",
-          ZIP: shippingAddress?.zip || "",
-          Country: shippingAddress?.country || "",
-          Phone: shippingAddress?.phone || "",
-          Email: rr.customerEmail || "",
+        from_address: {
+          name: shippingAddress?.name || rr.customerName || "Customer",
+          company: "",
+          street1: shippingAddress?.address1 || "",
+          street2: shippingAddress?.address2 || "",
+          city: shippingAddress?.city || "",
+          state: shippingAddress?.state || "",
+          zip: shippingAddress?.zip || "",
+          country: shippingAddress?.country || "",
+          phone: shippingAddress?.phone || "",
+          email: rr.customerEmail || "",
         },
-        Parcels: [{ Weight: 1, Length: 10, Width: 10, Height: 10 }],
-        Customs: customs,
+        parcels: [{ weight: 1, length: 10, width: 10, height: 10 }],
+        ...(isSweden ? {
+          CN22Info: customs.map((item) => ({
+            Description: item.Description,
+            Weight: 1,
+            Quantity: item.Quantity,
+            UnitValue: Number(item.Value),
+            OriginCountry: item.OriginCountry,
+            Currency: currencyCode,
+            HSCode: item.HSCode,
+          })),
+        } : {}),
       };
 
       const shipResult = await shippyproCall("Ship", params, rr.shop);
@@ -401,9 +481,10 @@ export async function createReturnLabel(returnRequestId: string, maxAttempts = 3
 
       const data = shipResult.data?.result || shipResult.data;
       const shippyproOrderId = data?.NewOrderID ? String(data.NewOrderID) : null;
-      const labelUrl = data?.LabelURL || data?.label_url || data?.label;
+      const rawLabelUrl = data?.PDF || data?.LabelURL || data?.label_url || data?.label;
+      const labelUrl = Array.isArray(rawLabelUrl) ? rawLabelUrl.find(Boolean) : rawLabelUrl;
       const trackingNumber = data?.TrackingNumber || data?.tracking_number;
-      const trackingUrl = data?.TrackingURL || data?.tracking_url;
+      const trackingUrl = data?.TrackingExternalLink || data?.TrackingURL || data?.tracking_url;
 
       await prisma.returnLabel.upsert({
         where: { returnRequestId: rr.id },
