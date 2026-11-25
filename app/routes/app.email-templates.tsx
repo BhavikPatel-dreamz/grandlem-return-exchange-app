@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useRef, useState, useEffect } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useFetcher, useLoaderData } from "react-router";
+import { Form, useActionData, useFetcher, useLoaderData, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
@@ -268,9 +268,22 @@ export default function EmailTemplatesPage() {
   const paletteFetcher = useFetcher<any>();
   const [isPaletteSaved, setIsPaletteSaved] = useState(false);
 
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const section: "form" | "policy" | "emails" =
+    tabParam === "policy" || tabParam === "emails" ? tabParam : "form";
+
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
+
+  // The template editor belongs to the Customer emails tab; close it when switching tabs.
+  useEffect(() => {
+    if (section !== "emails") {
+      setMode("list");
+      setEditingId(null);
+    }
+  }, [section]);
 
   const initialCustomization = data.customization || data.DEFAULT_RETURN_FORM_CUSTOMIZATION;
   const [primaryColor, setPrimaryColor] = useState(initialCustomization.primaryColor || "#de4066");
@@ -390,18 +403,18 @@ export default function EmailTemplatesPage() {
   }, [paletteFetcher.data, paletteFetcher.state]);
 
   return (
-    <SettingsLayout activeTab="emails">
+    <SettingsLayout activeTab={section}>
       {actionData?.message && <div className="returbo-banner">{actionData.message}</div>}
 
       {mode === "list" && (
         <div className="returbo-email-page">
-          <section className="returbo-card returbo-email-section" style={{ background: "#ffffff", padding: "24px 28px" }}>
+          <section className="returbo-card returbo-email-section" style={{ background: "#ffffff", padding: "24px 28px", display: section === "form" ? undefined : "none" }}>
             <div className="returbo-card-header" style={{ marginBottom: 20 }}>
               <h2 className="returbo-card-title" style={{ fontSize: 20, fontWeight: 800, color: "#111827", margin: "0 0 6px 0" }}>
-                Customer return form customization
+                Return form design
               </h2>
               <p className="returbo-card-subtitle" style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
-                Manage your return form, logo, and email notifications to create a custom return experience that suits your brand.
+                Set the logo, store name, and colors customers see on the storefront return form.
               </p>
             </div>
 
@@ -862,9 +875,9 @@ export default function EmailTemplatesPage() {
             </div>
           </section>
 
-          <section className="returbo-card returbo-email-section">
+          <section className="returbo-card returbo-email-section" style={{ display: section === "policy" ? undefined : "none" }}>
             <div className="returbo-card-header" style={{ marginBottom: 0 }}>
-              <h2 className="returbo-card-title">Return policy form</h2>
+              <h2 className="returbo-card-title">Return policy</h2>
               <p className="returbo-card-subtitle">
                 A return policy helps the customer to know the timeframe for returns, complaints, exchanges, and what products are allowed to be returned.
               </p>
@@ -1165,10 +1178,10 @@ export default function EmailTemplatesPage() {
             </div>
           </section>
 
-          <section className="returbo-card returbo-email-section">
+          <section className="returbo-card returbo-email-section" style={{ display: section === "emails" ? undefined : "none" }}>
             <div className="returbo-card-header returbo-email-section-header">
               <div>
-                <h2 className="returbo-card-title">Customer notification emails</h2>
+                <h2 className="returbo-card-title">Customer emails</h2>
                 <p className="returbo-card-subtitle">Manage transactional emails sent to customers throughout the return journey.</p>
                 <p className="returbo-card-subtitle">
                   Use <code>{"{{returnsUrl}}"}</code> to link to your storefront returns page (<code>{data.returnsUrl}</code>).
