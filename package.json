@@ -2,7 +2,7 @@
   "name": "grandlem-return-exchange-app",
   "private": true,
   "scripts": {
-    "build": "react-router build",
+    "build": "prisma generate && if [ -n \"$DATABASE_URL\" ]; then prisma migrate deploy; fi && react-router build",
     "dev": "shopify app dev --tunnel-url=https://grandlemar.dynamicdreamz.net:3006",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

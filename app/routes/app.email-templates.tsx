@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
-import { sendEmail, renderTemplate } from "../services/email.server";
+import { sendEmail, renderTemplate, isHtmlBody } from "../services/email.server";
 import {
   getOrCreateSettings,
   updateSettings,
@@ -121,21 +121,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         requestNumber: "GLM-1021",
         customerName: "Test Customer",
         items: "Jacket, Blue Shirt",
-        labelLink: "",
-        trackingLink: "",
-        returnsUrl: "/returns",
+        labelLink: "https://example.com/label.pdf",
+        trackingLink: "https://example.com/tracking",
+        reason: "Item was worn",
+        amount: "25.00",
+        paymentLink: "https://example.com/pay",
+        returnsUrl: storefrontReturnsUrl(shop),
       };
-      const subject = renderTemplate(
-        templateSubject,
-        testVars
-      );
-      const body = renderTemplate(
-        templateBody,
-        testVars
-      );
+      const subject = renderTemplate(templateSubject, testVars);
+      const isHtml = isHtmlBody(templateBody);
+      const body = renderTemplate(templateBody, testVars, isHtml);
       const settings = await getOrCreateSettings(shop);
-      const result = await sendEmail(to, subject, body, settings.emailFrom || undefined);
-      return { ok: result.ok, message: result.ok ? "Template saved and test email sent" : "Template saved, but test email could not be sent" };
+      const result = await sendEmail(to, subject, body, settings.emailFrom || undefined, isHtml);
+      return {
+        ok: result.ok,
+        message: result.ok
+          ? `Template saved and test email sent to ${to}`
+          : `Template saved, but the test email was not sent: ${result.error || "unknown error"}`,
+      };
     }
     return { ok: false, message: "Unknown action" };
   } catch (e) {
@@ -148,14 +151,26 @@ const EVENT_OPTIONS = [
   "item_received", "replacement_sent", "store_credit_issued", "withdrawal",
 ];
 
-function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
+/** Plain-text templates (like the built-in defaults) lose their line breaks in a contentEditable; convert them to HTML first. */
+function bodyToEditorHtml(body?: string): string {
+  if (!body) return "";
+  if (/<\/?[a-z][\s\S]*>/i.test(body)) return body;
+  return body
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\r?\n/g, "<br>");
+}
+
+function RichTextEditor({ name, initial: rawInitial }: { name: string; initial?: string }) {
+  const initial = bodyToEditorHtml(rawInitial);
   const editorRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
   const [htmlMode, setHtmlMode] = useState(false);
-  const [htmlSource, setHtmlSource] = useState(initial || "");
+  const [htmlSource, setHtmlSource] = useState(initial);
 
   useEffect(() => {
-    const value = initial || "";
+    const value = initial;
     if (editorRef.current) editorRef.current.innerHTML = value;
     if (hiddenRef.current) hiddenRef.current.value = value;
     setHtmlSource(value);

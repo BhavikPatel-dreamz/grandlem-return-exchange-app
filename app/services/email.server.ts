@@ -33,46 +33,109 @@ export function renderTemplate(str: string, vars: EmailVars, html = false): stri
   });
 }
 
-export async function sendEmail(to: string, subject: string, body: string, sender?: string): Promise<{ ok: boolean; provider: string }> {
+const HTML_TAG = /<\/?[a-z][\s\S]*>/i;
+
+/** Whether a template body was written as HTML (decide from the template, not the filled-in body). */
+export function isHtmlBody(template: string): boolean {
+  return HTML_TAG.test(template);
+}
+
+/**
+ * Turns a template body into email-ready HTML. Plain-text bodies (like the
+ * built-in defaults) keep their line breaks; HTML bodies from the rich-text
+ * editor are used as-is. Either way the result is wrapped in a simple layout.
+ */
+export function toEmailHtml(body: string, isHtml = isHtmlBody(body)): string {
+  const content = isHtml
+    ? body
+    : escapeHtml(body).replace(/\r?\n/g, "<br>\n");
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+  <body style="margin:0;padding:24px;background:#f6f6f7;">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:8px;padding:28px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#111827;">
+${content}
+    </div>
+  </body>
+</html>`;
+}
+
+/** Plain-text alternative for email clients that don't render HTML. */
+export function toEmailText(body: string, isHtml = isHtmlBody(body)): string {
+  if (!isHtml) return body.trim();
+  return body
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<a\s[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, "$2 ($1)")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export type SendEmailResult = { ok: boolean; provider: string; error?: string };
+
+export async function sendEmail(
+  to: string,
+  subject: string,
+  body: string,
+  sender?: string,
+  isHtml: boolean = isHtmlBody(body),
+): Promise<SendEmailResult> {
+  if (!to.trim()) return { ok: false, provider: "none", error: "No recipient email address" };
+
   const resendApiKey = process.env.RESEND_API_KEY
     || (process.env.EMAIL_PROVIDER?.toLowerCase() === "resend" ? process.env.EMAIL_API_KEY : undefined);
   if (resendApiKey) {
     const from = sender?.trim() || process.env.EMAIL_FROM;
     if (!from) {
       console.error("[Email] EMAIL_FROM is required when using Resend.");
-      return { ok: false, provider: "resend" };
+      return { ok: false, provider: "resend", error: "No sender address: set the company sender email or EMAIL_FROM" };
     }
 
     try {
-      const hasHtml = /<\/?[a-z][\s\S]*>/i.test(body);
-      const html = hasHtml ? body : `<div style="white-space: pre-wrap">${escapeHtml(body)}</div>`;
-      const text = hasHtml ? body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : body;
-      const { error } = await new Resend(resendApiKey).emails.send({ from, to, subject, html, text });
+      const { error } = await new Resend(resendApiKey).emails.send({
+        from,
+        to,
+        subject,
+        html: toEmailHtml(body, isHtml),
+        text: toEmailText(body, isHtml),
+      });
       if (error) {
         console.error(`[Email] Resend delivery failed: ${error.message}`);
-        return { ok: false, provider: "resend" };
+        return { ok: false, provider: "resend", error: error.message };
       }
       return { ok: true, provider: "resend" };
     } catch (error) {
       console.error("[Email] Resend delivery failed:", error);
-      return { ok: false, provider: "resend" };
+      return { ok: false, provider: "resend", error: error instanceof Error ? error.message : "Resend request failed" };
     }
   }
 
   if (process.env.EMAIL_WEBHOOK_URL) {
     try {
-      await fetch(process.env.EMAIL_WEBHOOK_URL, {
+      const res = await fetch(process.env.EMAIL_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject, body }),
+        body: JSON.stringify({ to, subject, body, html: toEmailHtml(body, isHtml), text: toEmailText(body, isHtml) }),
       });
-      return { ok: true, provider: "webhook" };
-    } catch {
-      // fall through to console
+      if (res.ok) return { ok: true, provider: "webhook" };
+      console.error(`[Email] Webhook delivery failed with status ${res.status}`);
+    } catch (error) {
+      console.error("[Email] Webhook delivery failed:", error);
     }
   }
-  console.log(`[Email] To: ${to}\nSubject: ${subject}\n${body}\n---`);
-  return { ok: true, provider: "console" };
+
+  // No provider configured: nothing is actually delivered, so report failure.
+  console.warn(`[Email] Not sent (set RESEND_API_KEY to enable delivery).\nTo: ${to}\nSubject: ${subject}\n${toEmailText(body, isHtml)}\n---`);
+  return { ok: false, provider: "console", error: "Email delivery is not configured (RESEND_API_KEY is missing)" };
 }
 
 export async function sendEventEmail(
@@ -81,19 +144,22 @@ export async function sendEventEmail(
   language: string,
   to: string,
   vars: EmailVars,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; error?: string }> {
   const templates = await listEmailTemplates(shop);
   const tpl = templates.find((t: any) => t.event === event && t.language === language)
     || templates.find((t: any) => t.event === event)
     || null;
-  if (!tpl) return { ok: false };
+  if (!tpl) {
+    console.warn(`[Email] No "${event}" email template for ${shop}; nothing sent.`);
+    return { ok: false, error: `No "${event}" email template` };
+  }
   // Every template can use {{returnsUrl}}: the storefront return page (app proxy).
   const allVars: EmailVars = { returnsUrl: storefrontReturnsUrl(shop), ...vars };
   const subject = renderTemplate(tpl.subject, allVars);
-  // Always treat email body as HTML to allow HTML design from admin
-  const bodyIsHtml = true;
-  const body = renderTemplate(tpl.body, allVars, bodyIsHtml);
+  // HTML bodies get escaped variable values; plain-text bodies are escaped later by toEmailHtml.
+  const isHtml = isHtmlBody(tpl.body);
+  const body = renderTemplate(tpl.body, allVars, isHtml);
   const settings = await getOrCreateSettings(shop);
-  const result = await sendEmail(to, subject, body, settings.emailFrom || undefined);
-  return { ok: result.ok };
+  const result = await sendEmail(to, subject, body, settings.emailFrom || undefined, isHtml);
+  return { ok: result.ok, error: result.error };
 }
