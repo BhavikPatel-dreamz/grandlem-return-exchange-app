@@ -396,7 +396,7 @@ export function page(opts: {
   isSummaryPage?: boolean;
   customization?: ReturnFormCustomization;
 }): string {
-  const topbar = opts.showTopbar ? topBar() : "";
+  const topbar = false ? topBar() : "";
   const footer = opts.showFooter ? orderFooter() : "";
   const eyebrow = opts.eyebrow ? `<div class="glr-eyebrow">${esc(opts.eyebrow)}</div>` : "";
   const customStyles = opts.customization
