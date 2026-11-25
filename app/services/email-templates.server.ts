@@ -1,6 +1,6 @@
 import prisma from "../db.server";
 
-export const EMAIL_EVENTS = ["received", "approved", "rejected", "payment_required"] as const;
+export const EMAIL_EVENTS = ["received", "approved", "rejected", "refund_issued", "payment_required"] as const;
 export type EmailEvent = (typeof EMAIL_EVENTS)[number];
 
 export async function ensureDefaultTemplates(shop: string) {
@@ -8,6 +8,7 @@ export async function ensureDefaultTemplates(shop: string) {
     { event: "received", language: "en", subject: "We received your return request ({{orderNumber}})", body: "Hi {{customerName}},\n\nWe received your return request for order {{orderNumber}}.\n\nItems:\n{{items}}\n\nWe will review and get back to you.\n" },
     { event: "approved", language: "en", subject: "Your return request is approved ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour return request for order {{orderNumber}} is approved.\n\nLabel: {{labelLink}}\nTracking: {{trackingLink}}\n" },
     { event: "rejected", language: "en", subject: "Your return request was rejected ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour return request for order {{orderNumber}} was rejected.\nReason: {{reason}}\n" },
+    { event: "refund_issued", language: "en", subject: "Your refund has been issued ({{orderNumber}})", body: "Hi {{customerName}},\n\nWe have issued a refund of {{amount}} for order {{orderNumber}}.\n\nIt can take a few business days to appear on your statement.\n" },
     { event: "payment_required", language: "en", subject: "Payment required for your exchange ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour exchange for order {{orderNumber}} requires a payment of {{amount}}.\nPay here: {{paymentLink}}\n" },
   ];
 
