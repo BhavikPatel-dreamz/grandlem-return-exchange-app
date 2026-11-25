@@ -55,8 +55,30 @@ function Toggle({ id, label, checked, onChange }: { id: string; label: string; c
   );
 }
 
-/** One header + footer shared by every customer email, with a live preview. */
-export function EmailLayoutEditor({ initialLayout, formLogoUrl, templates, returnsUrl, emailFrom }: EmailLayoutEditorProps) {
+/**
+ * One header + footer shared by every customer email, with a live preview.
+ * Rendered in the browser only: it is fully interactive (file upload, color
+ * pickers, iframe preview), and skipping server rendering avoids hydration
+ * mismatches and keeps the uploaded logo out of the server HTML.
+ */
+export function EmailLayoutEditor(props: EmailLayoutEditorProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) {
+    return (
+      <section className="returbo-card returbo-email-section" aria-busy="true">
+        <div className="returbo-card-header" style={{ marginBottom: 16 }}>
+          <h2 className="returbo-card-title">Email header &amp; footer</h2>
+          <p className="returbo-card-subtitle">Loading email design…</p>
+        </div>
+      </section>
+    );
+  }
+  return <EmailLayoutEditorContent {...props} />;
+}
+
+function EmailLayoutEditorContent({ initialLayout, formLogoUrl, templates, returnsUrl, emailFrom }: EmailLayoutEditorProps) {
   const fetcher = useFetcher<{ ok: boolean; message: string }>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [layout, setLayout] = useState<EmailLayout>(initialLayout);
