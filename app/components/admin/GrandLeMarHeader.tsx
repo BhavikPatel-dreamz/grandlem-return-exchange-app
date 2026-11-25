@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-export type SettingsTab = "inspection" | "analytics" | "emails" | "settings";
+export type SettingsTab = "analytics" | "emails" | "settings";
 export type AppSection = "returns" | "settings" | "dashboard";
 
 interface GrandLeMarHeaderProps {
@@ -48,29 +48,6 @@ export function GrandLeMarHeader({ activeSection, activeTab }: GrandLeMarHeaderP
       {activeSection === "settings" && (
         <div className="returbo-tabs-bar" role="tablist">
           <div className="returbo-tabs-inner">
-          <Link
-            to="/app/inspection"
-            className={`returbo-tab-item ${activeTab === "inspection" ? "active" : ""}`}
-            role="tab"
-            aria-selected={activeTab === "inspection"}
-          >
-            <svg
-              className="returbo-tab-icon"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-              />
-            </svg>
-            <span>Inspection</span>
-          </Link>
-
           <Link
             to="/app/analytics"
             className={`returbo-tab-item ${activeTab === "analytics" ? "active" : ""}`}

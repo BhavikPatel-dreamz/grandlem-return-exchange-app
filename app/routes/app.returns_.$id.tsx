@@ -1122,18 +1122,6 @@ export default function ReturnDetailPage() {
               </table>
             </div>
 
-            {/* Warehouse Quick Link Card */}
-            <div className="returbo-detail-card" style={{ background: "#fafbfc" }}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: "#111827", margin: "0 0 6px 0" }}>
-                Warehouse Inspection
-              </h3>
-              <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 12px 0" }}>
-                Need to record physical receipt, item condition, or damage verification?
-              </p>
-              <Link to="/app/inspection" className="returbo-btn-pink-outline" style={{ width: "100%", justifyContent: "center" }}>
-                Open Warehouse Inspection →
-              </Link>
-            </div>
           </div>
         </div>
       </main>
