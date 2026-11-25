@@ -1,5 +1,6 @@
 import prisma from "../db.server";
 import { DEFAULT_RETURN_POLICY_EN } from "./return-policy";
+import { DEFAULT_EMAIL_LAYOUT, normalizeEmailLayout, type EmailLayout } from "./email-layout";
 
 export { DEFAULT_RETURN_POLICY_EN } from "./return-policy";
 
@@ -203,3 +204,32 @@ export async function updateReturnPolicy(shop: string, policyText: string) {
   });
 }
 
+
+/**
+ * Shared email header/footer. Until a shop saves one, it is derived from the
+ * return form branding (logo, store name, primary color).
+ */
+export function getEmailLayout(settings?: { labelTimingPerMarket?: string | null } | null): EmailLayout {
+  const timings = parseJson<Record<string, string>>(settings?.labelTimingPerMarket, {});
+  const form = getReturnFormCustomization(settings);
+  const base = normalizeEmailLayout(
+    {
+      logoUrl: form.logoUrl || "",
+      storeName: form.storeName || DEFAULT_EMAIL_LAYOUT.storeName,
+      accentColor: form.primaryColor,
+    },
+    DEFAULT_EMAIL_LAYOUT,
+  );
+  const raw = timings["__email_layout"];
+  if (!raw) return base;
+  return normalizeEmailLayout(parseJson<unknown>(raw, {}), base);
+}
+
+export async function updateEmailLayout(shop: string, layout: EmailLayout) {
+  const current = await getOrCreateSettings(shop);
+  const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
+  timings["__email_layout"] = JSON.stringify(normalizeEmailLayout(layout, getEmailLayout(current)));
+  return updateSettings(shop, {
+    labelTimingPerMarket: timings as Record<string, "immediate" | "after_approval">,
+  });
+}
