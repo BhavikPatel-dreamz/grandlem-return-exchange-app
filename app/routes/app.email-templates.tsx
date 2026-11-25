@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
-import { sendEmail, renderTemplate, isHtmlBody } from "../services/email.server";
+import { sendEmail, buildShopEmail } from "../services/email.server";
 import {
   getOrCreateSettings,
   updateSettings,
@@ -14,10 +14,21 @@ import {
   updateReturnFormCustomization,
   getReturnPolicy,
   updateReturnPolicy,
+  getEmailLayout,
+  updateEmailLayout,
 } from "../services/settings.server";
+import {
+  normalizeEmailLayout,
+  renderTemplate,
+  renderEmailDocument,
+  renderTemplateHtml,
+  SAMPLE_EMAIL_VARS,
+} from "../services/email-layout";
 import { DEFAULT_RETURN_POLICY_EN } from "../services/return-policy";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
 import { ReturnFormPreview } from "../components/admin/ReturnFormPreview";
+import { EmailLayoutEditor } from "../components/admin/EmailLayoutEditor";
+import { EmailPreview } from "../components/admin/EmailPreview";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -42,6 +53,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     customization,
     DEFAULT_RETURN_FORM_CUSTOMIZATION,
     returnPolicy: getReturnPolicy(settings),
+    emailLayout: getEmailLayout(settings),
   };
 };
 
@@ -78,6 +90,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         storeName,
       });
       return { ok: true, message: "Palette saved successfully" };
+    }
+    if (intent === "save_email_layout") {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(String(formData.get("layout") || "{}"));
+      } catch {
+        return { ok: false, message: "Could not read the header and footer settings" };
+      }
+      const settings = await getOrCreateSettings(shop);
+      const layout = normalizeEmailLayout(raw, getEmailLayout(settings));
+      if (layout.logoUrl.startsWith("data:") && !/^data:image\/(png|jpeg|gif|webp);base64,/i.test(layout.logoUrl)) {
+        return { ok: false, message: "Logo must be a PNG, JPG, GIF or WebP image" };
+      }
+      if (layout.logoUrl.length > 450_000) {
+        return { ok: false, message: "Logo must be 300 KB or smaller" };
+      }
+      await updateEmailLayout(shop, layout);
+      return { ok: true, message: "Email header and footer saved" };
     }
     if (intent === "save_return_policy") {
       const policy = String(formData.get("policy") || "").trim();
@@ -116,23 +146,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
       // Use test variables so email has content during testing
-      const testVars = {
-        orderNumber: "#1021",
-        requestNumber: "GLM-1021",
-        customerName: "Test Customer",
-        items: "Jacket, Blue Shirt",
-        labelLink: "https://example.com/label.pdf",
-        trackingLink: "https://example.com/tracking",
-        reason: "Item was worn",
-        amount: "25.00",
-        paymentLink: "https://example.com/pay",
-        returnsUrl: storefrontReturnsUrl(shop),
-      };
-      const subject = renderTemplate(templateSubject, testVars);
-      const isHtml = isHtmlBody(templateBody);
-      const body = renderTemplate(templateBody, testVars, isHtml);
-      const settings = await getOrCreateSettings(shop);
-      const result = await sendEmail(to, subject, body, settings.emailFrom || undefined, isHtml);
+      const { settings, html, text, vars } = await buildShopEmail(shop, templateBody, SAMPLE_EMAIL_VARS);
+      const subject = renderTemplate(templateSubject, vars);
+      const result = await sendEmail(to, subject, templateBody, settings.emailFrom || undefined, { html, text });
       return {
         ok: result.ok,
         message: result.ok
@@ -162,7 +178,7 @@ function bodyToEditorHtml(body?: string): string {
     .replace(/\r?\n/g, "<br>");
 }
 
-function RichTextEditor({ name, initial: rawInitial }: { name: string; initial?: string }) {
+function RichTextEditor({ name, initial: rawInitial, onChange }: { name: string; initial?: string; onChange?: (html: string) => void }) {
   const initial = bodyToEditorHtml(rawInitial);
   const editorRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
@@ -174,6 +190,8 @@ function RichTextEditor({ name, initial: rawInitial }: { name: string; initial?:
     if (editorRef.current) editorRef.current.innerHTML = value;
     if (hiddenRef.current) hiddenRef.current.value = value;
     setHtmlSource(value);
+    onChange?.(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
 
   const sync = () => {
@@ -181,6 +199,7 @@ function RichTextEditor({ name, initial: rawInitial }: { name: string; initial?:
     const value = editorRef.current.innerHTML;
     if (hiddenRef.current) hiddenRef.current.value = value;
     setHtmlSource(value);
+    onChange?.(value);
   };
 
   const showHtmlSource = () => {
@@ -251,6 +270,7 @@ function RichTextEditor({ name, initial: rawInitial }: { name: string; initial?:
           onChange={(event) => {
             setHtmlSource(event.currentTarget.value);
             if (hiddenRef.current) hiddenRef.current.value = event.currentTarget.value;
+            onChange?.(event.currentTarget.value);
           }}
           style={{ display: "block", boxSizing: "border-box", width: "100%", minHeight: 180, padding: 14, border: 0, outline: "none", resize: "vertical", fontFamily: "monospace", fontSize: 13, background: "#fafafa" }}
         />
@@ -291,6 +311,33 @@ export default function EmailTemplatesPage() {
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
+
+  // Live preview of the template being created/edited, inside the shared header and footer.
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  useEffect(() => {
+    setDraftSubject(mode === "edit" && editingTemplate ? editingTemplate.subject : "");
+    if (mode === "create") setDraftBody("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, editingId]);
+  const previewVars = { ...SAMPLE_EMAIL_VARS, storeName: data.emailLayout.storeName, returnsUrl: data.returnsUrl };
+  const draftPreview = (
+    <div style={{ position: "sticky", top: 16, minWidth: 0 }}>
+      <EmailPreview
+        title="Live preview"
+        subject={renderTemplate(draftSubject, previewVars)}
+        from={data.emailFrom || undefined}
+        html={renderEmailDocument({
+          layout: data.emailLayout,
+          bodyHtml: renderTemplateHtml(draftBody, previewVars),
+          vars: previewVars,
+        })}
+      />
+      <p style={{ fontSize: 12, color: "#6b7280", margin: "8px 2px 0" }}>
+        Shown with sample order data. The header and footer are edited once, on the Customer emails tab.
+      </p>
+    </div>
+  );
 
   // The template editor belongs to the Customer emails tab; close it when switching tabs.
   useEffect(() => {
@@ -1193,11 +1240,21 @@ export default function EmailTemplatesPage() {
             </div>
           </section>
 
+          <div style={{ display: section === "emails" ? undefined : "none" }}>
+            <EmailLayoutEditor
+              initialLayout={data.emailLayout}
+              formLogoUrl={data.customization?.logoUrl || ""}
+              templates={data.templates}
+              returnsUrl={data.returnsUrl}
+              emailFrom={data.emailFrom}
+            />
+          </div>
+
           <section className="returbo-card returbo-email-section" style={{ display: section === "emails" ? undefined : "none" }}>
             <div className="returbo-card-header returbo-email-section-header">
               <div>
-                <h2 className="returbo-card-title">Customer emails</h2>
-                <p className="returbo-card-subtitle">Manage transactional emails sent to customers throughout the return journey.</p>
+                <h2 className="returbo-card-title">Email messages</h2>
+                <p className="returbo-card-subtitle">The subject and message for each step of the return journey. They all use the header and footer above.</p>
                 <p className="returbo-card-subtitle">
                   Use <code>{"{{returnsUrl}}"}</code> to link to your storefront returns page (<code>{data.returnsUrl}</code>).
                 </p>
@@ -1278,7 +1335,8 @@ export default function EmailTemplatesPage() {
       )}
 
       {mode === "create" && (
-        <div className="returbo-card">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 20, alignItems: "start" }}>
+        <div className="returbo-card" style={{ minWidth: 0 }}>
           <div className="returbo-card-header">
             <h2 className="returbo-card-title">New Email Template</h2>
             <p className="returbo-card-subtitle">Create a localized email template for a return lifecycle event.</p>
@@ -1325,6 +1383,7 @@ export default function EmailTemplatesPage() {
                   name="subject"
                   required
                   placeholder="e.g. We received your return request ({{orderNumber}})"
+                  onChange={(e) => setDraftSubject(e.currentTarget.value)}
                   className="returbo-detail-input"
                   style={{ width: "100%", height: 38 }}
                 />
@@ -1334,7 +1393,7 @@ export default function EmailTemplatesPage() {
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
                   Content
                 </label>
-                <RichTextEditor name="body" />
+                <RichTextEditor name="body" onChange={setDraftBody} />
               </div>
 
               <div style={{ display: "flex", gap: 10, marginTop: 6, alignItems: "center" }}>
@@ -1352,10 +1411,13 @@ export default function EmailTemplatesPage() {
             </div>
           </Form>
         </div>
+        {draftPreview}
+        </div>
       )}
 
       {mode === "edit" && editingTemplate && (
-        <div className="returbo-card">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 20, alignItems: "start" }}>
+        <div className="returbo-card" style={{ minWidth: 0 }}>
           <div className="returbo-card-header">
             <h2 className="returbo-card-title">Edit Template: {editingTemplate.event} ({editingTemplate.language})</h2>
             <p className="returbo-card-subtitle">Update email subject, content, and test email delivery.</p>
@@ -1405,6 +1467,7 @@ export default function EmailTemplatesPage() {
                   name="subject"
                   required
                   defaultValue={editingTemplate.subject}
+                  onChange={(e) => setDraftSubject(e.currentTarget.value)}
                   className="returbo-detail-input"
                   style={{ width: "100%", height: 38 }}
                 />
@@ -1414,7 +1477,7 @@ export default function EmailTemplatesPage() {
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
                   Content
                 </label>
-                <RichTextEditor name="body" initial={editingTemplate.body} />
+                <RichTextEditor name="body" initial={editingTemplate.body} onChange={setDraftBody} />
               </div>
 
               <div style={{ display: "flex", gap: 10, marginTop: 6, alignItems: "center" }}>
@@ -1499,6 +1562,8 @@ export default function EmailTemplatesPage() {
               </button>
             </Form>
           </div>
+        </div>
+        {draftPreview}
         </div>
       )}
     </SettingsLayout>
