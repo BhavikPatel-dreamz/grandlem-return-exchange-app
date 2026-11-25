@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { redirect, type HeadersFunction, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
@@ -22,8 +22,12 @@ function resolveRange(range: string, url: URL) {
   return { from, to: now, label: `Last ${days} days` };
 }
 
+// Analytics is hidden for now. Set to true (and restore the Settings tab link) to bring it back.
+const ANALYTICS_ENABLED = false;
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!ANALYTICS_ENABLED) throw redirect("/app/settings");
   const shop = session.shop;
   const url = new URL(request.url);
   const range = url.searchParams.get("range") || "30";

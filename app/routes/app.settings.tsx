@@ -53,7 +53,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = session.shop;
   const url = new URL(request.url);
   const tab = url.searchParams.get("tab");
-  if (tab === "analytics") return redirect("/app/analytics");
   if (tab === "emails") return redirect("/app/email-templates");
 
   const settings = await getOrCreateSettings(shop);
