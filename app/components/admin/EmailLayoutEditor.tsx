@@ -110,7 +110,8 @@ function EmailLayoutEditorContent({ initialLayout, formLogoUrl, templates, retur
     reader.readAsDataURL(file);
   };
 
-  const previewTemplate = templates.find((t) => t.id === previewId) ?? templates[0];
+  const previewTemplates = templates.filter((template) => !(template.event === "received" && template.language === "sv"));
+  const previewTemplate = previewTemplates.find((template) => template.id === previewId) ?? previewTemplates[0];
   const vars = useMemo(
     () => ({ ...SAMPLE_EMAIL_VARS, storeName: layout.storeName, returnsUrl }),
     [layout.storeName, returnsUrl],
@@ -246,7 +247,7 @@ function EmailLayoutEditorContent({ initialLayout, formLogoUrl, templates, retur
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
-          {templates.length > 0 && (
+          {previewTemplates.length > 0 && (
             <div>
               <label htmlFor="email-preview-template" style={labelStyle}>Preview with</label>
               <select
@@ -256,7 +257,7 @@ function EmailLayoutEditorContent({ initialLayout, formLogoUrl, templates, retur
                 className="returbo-detail-input"
                 style={{ width: "100%", height: 38, background: "#ffffff" }}
               >
-                {templates.map((t) => (
+                {previewTemplates.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.event.replaceAll("_", " ")} ({t.language.toUpperCase()})
                   </option>
