@@ -293,7 +293,7 @@ async function fetchOrderLineItemValues(shop: string, shopifyOrderId: string): P
   }
 }
 
-async function fetchWarehouseAddress(shop: string, locationId: string | null): Promise<Record<string, string> | null> {
+export async function fetchWarehouseAddress(shop: string, locationId: string | null): Promise<Record<string, string> | null> {
   if (!locationId) return null;
   try {
     const { admin } = await unauthenticated.admin(shop);
