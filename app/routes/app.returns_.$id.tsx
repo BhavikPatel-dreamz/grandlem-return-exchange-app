@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
-import { createReturnLabel, voidReturnLabel } from "../services/shippypro.server";
+import { createReturnLabel, fetchWarehouseAddress, voidReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
 import { performRestock } from "../services/restock.server";
@@ -44,6 +44,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
   });
   if (!rr) throw new Response("Not found", { status: 404 });
+  let warehouseAddress = await fetchWarehouseAddress(shop, rr.fulfillmentLocationId);
 
   const itemImages: Record<string, string> = {};
   let customerName = rr.customerName;
@@ -69,6 +70,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           order(id: $id) {
             customer { firstName lastName }
             shippingAddress { name }
+            fulfillmentOrders(first: 10) {
+              edges {
+                node {
+                  assignedLocation { location { id } }
+                }
+              }
+            }
             lineItems(first: 50) {
               edges {
                 node {
@@ -97,6 +105,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         { variables: { id: orderGid } }
       );
       const json = await response.json();
+      if (!warehouseAddress) {
+        const locationId = json?.data?.order?.fulfillmentOrders?.edges
+          ?.map((edge: any) => edge.node?.assignedLocation?.location?.id)
+          .find(Boolean);
+        if (locationId) warehouseAddress = await fetchWarehouseAddress(shop, locationId);
+      }
       const customer = json?.data?.order?.customer;
       customerName ||= [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || json?.data?.order?.shippingAddress?.name || null;
       const lineItemNodes = json?.data?.order?.lineItems?.edges?.map((e: any) => e.node) || [];
@@ -158,7 +172,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     reason: item.reason ? decodeReason(item.reason) : null,
   }));
 
-  return { rr: { ...rr, items, customerName }, itemImages, carrierName };
+  return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress };
 };
 
 async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumber: string | null; customerEmail: string | null }) {
@@ -370,7 +384,7 @@ function formatDateTime(value: string | Date) {
 }
 
 export default function ReturnDetailPage() {
-  const { rr, itemImages = {}, carrierName } = useLoaderData<typeof loader>();
+  const { rr, itemImages = {}, carrierName, warehouseAddress } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isApproving = navigation.state !== "idle" && navigation.formData?.get("_action") === "approve";
@@ -892,6 +906,23 @@ export default function ReturnDetailPage() {
                       <tr>
                         <td className="returbo-detail-info-label">Selected Carrier</td>
                         <td className="returbo-detail-info-val">{carrierName || rr.label.connectionId || rr.carrierId || "Default carrier"}</td>
+                      </tr>
+                      <tr>
+                        <td className="returbo-detail-info-label">Shopify warehouse</td>
+                        <td className="returbo-detail-info-val">
+                          {warehouseAddress
+                            ? [
+                                warehouseAddress.name,
+                                warehouseAddress.company,
+                                warehouseAddress.address1,
+                                warehouseAddress.address2,
+                                warehouseAddress.city,
+                                warehouseAddress.state,
+                                warehouseAddress.zip,
+                                warehouseAddress.country,
+                              ].filter(Boolean).join(", ")
+                            : "Fulfillment location address unavailable"}
+                        </td>
                       </tr>
                       <tr>
                         <td className="returbo-detail-info-label">Service</td>

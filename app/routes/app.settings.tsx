@@ -958,7 +958,7 @@ export function SettingsView() {
                 </span>
                 {data.carriers[0]?.syncedAt && (
                   <span style={{ fontSize: 12, color: "#64748b" }}>
-                    Last synced: {new Date(data.carriers[0].syncedAt).toLocaleDateString()}
+                    Last synced: {new Date(data.carriers[0].syncedAt).toLocaleDateString("en-US", { timeZone: "UTC" })}
                   </span>
                 )}
               </div>
