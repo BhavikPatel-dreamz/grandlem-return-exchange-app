@@ -5,6 +5,9 @@ import {
   renderTemplate,
   renderTemplateHtml,
   SAMPLE_EMAIL_VARS,
+  EMAIL_LOGO_HEIGHT_STEP,
+  MAX_EMAIL_LOGO_HEIGHT,
+  MIN_EMAIL_LOGO_HEIGHT,
   type EmailLayout,
 } from "../../services/email-layout";
 import { EmailPreview } from "./EmailPreview";
@@ -156,6 +159,29 @@ function EmailLayoutEditorContent({ initialLayout, formLogoUrl, templates, retur
                       <span style={{ fontSize: 12, color: "#9ca3af" }}>No logo</span>
                     )}
                   </div>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      type="button"
+                      className="returbo-btn-secondary"
+                      title="Decrease logo size"
+                      aria-label="Decrease logo size"
+                      disabled={layout.logoHeight <= MIN_EMAIL_LOGO_HEIGHT}
+                      onClick={() => set("logoHeight", Math.max(MIN_EMAIL_LOGO_HEIGHT, layout.logoHeight - EMAIL_LOGO_HEIGHT_STEP))}
+                    >
+                      -
+                    </button>
+                    <span style={{ minWidth: 42, textAlign: "center", fontSize: 12, color: "#374151" }}>{layout.logoHeight}px</span>
+                    <button
+                      type="button"
+                      className="returbo-btn-secondary"
+                      title="Increase logo size"
+                      aria-label="Increase logo size"
+                      disabled={layout.logoHeight >= MAX_EMAIL_LOGO_HEIGHT}
+                      onClick={() => set("logoHeight", Math.min(MAX_EMAIL_LOGO_HEIGHT, layout.logoHeight + EMAIL_LOGO_HEIGHT_STEP))}
+                    >
+                      +
+                    </button>
+                  </div>
                   <button type="button" className="returbo-btn-secondary" onClick={() => fileInputRef.current?.click()}>
                     Upload logo
                   </button>
@@ -172,7 +198,7 @@ function EmailLayoutEditorContent({ initialLayout, formLogoUrl, templates, retur
                   <input ref={fileInputRef} type="file" accept={LOGO_TYPES} onChange={handleLogoFile} style={{ display: "none" }} aria-label="Upload email logo" />
                 </div>
                 {logoError && <p role="alert" style={{ ...hintStyle, color: "#b91c1c" }}>{logoError}</p>}
-                <p style={hintStyle}>PNG, JPG, GIF or WebP, up to 300 KB. Shown at 48px high.</p>
+                <p style={hintStyle}>PNG, JPG, GIF or WebP, up to 300 KB. Shown at {layout.logoHeight}px high.</p>
                 <div style={{ marginTop: 8 }}>
                   <Toggle id="email-show-logo" label="Show logo" checked={layout.showLogo} onChange={(v) => set("showLogo", v)} />
                 </div>
