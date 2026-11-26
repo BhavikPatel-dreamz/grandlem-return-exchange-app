@@ -100,7 +100,11 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
   const carriers = Array.isArray(carrierData)
     ? carrierData
     : carrierData && typeof carrierData === "object"
-      ? [carrierData]
+      ? "CarrierID" in carrierData || "id" in carrierData || "carrier_id" in carrierData
+        ? [carrierData]
+        : Object.values(carrierData).flatMap((entries) =>
+            Array.isArray(entries) ? entries : entries && typeof entries === "object" ? [entries] : [],
+          )
       : [];
   const syncedCarriers = [];
   for (const c of carriers) {
@@ -108,6 +112,7 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
     if (!connectionId) continue;
     const services = Array.from(new Set([
       c.CarrierService,
+      ...(Array.isArray(c.ServiceList) ? c.ServiceList : []),
       ...(Array.isArray(c.ServicesList) ? c.ServicesList : []),
       c.Service,
       c.service,
