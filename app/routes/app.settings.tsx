@@ -917,58 +917,155 @@ export function SettingsView() {
 
         {/* ShippyPro carriers */}
         <div className="returbo-card" style={{ marginBottom: 22 }}>
-          <div className="returbo-card-header" style={{ marginBottom: 18, paddingBottom: 0, borderBottom: "none" }}>
-            <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
-              ShippyPro carriers
-            </h2>
-            <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
-              Synchronize available shipping carriers configured in your ShippyPro account.
-            </p>
-          </div>
-
-          {data.carriers && data.carriers.length > 0 ? (
-            <div style={{ marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
-                  Synchronized Carriers ({data.carriers.length})
+          <div
+            className="returbo-card-header"
+            style={{
+              marginBottom: 18,
+              paddingBottom: 14,
+              borderBottom: "1px solid #f1f5f9",
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <h2 className="returbo-card-title" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 6px 0" }}>
+                ShippyPro carriers
+              </h2>
+              <p className="returbo-card-subtitle" style={{ fontSize: 12.5, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+                Synchronize available shipping carriers configured in your ShippyPro account.
+              </p>
+            </div>
+            {data.carriers && data.carriers.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "#fdf2f4",
+                    color: "#de4066",
+                    border: "1px solid #fce7f3",
+                    borderRadius: 9999,
+                    padding: "4px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  {data.carriers.length} {data.carriers.length === 1 ? "carrier" : "carriers"}
                 </span>
                 {data.carriers[0]?.syncedAt && (
-                  <span style={{ fontSize: 11.5, color: "#64748b" }}>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>
                     Last synced: {new Date(data.carriers[0].syncedAt).toLocaleDateString()}
                   </span>
                 )}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-                {data.carriers.map((c: any) => (
-                  <div
-                    key={c.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "10px 14px",
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 6,
-                      background: "#f8fafc",
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#de4066" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                      <rect x="1" y="3" width="15" height="13" />
-                      <polygon points="16 8 20 8 23 11 23 16 16 16 8" />
-                      <circle cx="5.5" cy="18.5" r="2.5" />
-                      <circle cx="18.5" cy="18.5" r="2.5" />
-                    </svg>
-                    <div style={{ overflow: "hidden" }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                        {c.name}
-                      </div>
-                      <div style={{ fontSize: 11.5, color: "#64748b" }}>
-                        ID: <code style={{ color: "#334155" }}>{c.shippyproCarrierId}</code>{c.service ? ` • ${c.service}` : ""}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            )}
+          </div>
+
+          {data.carriers && data.carriers.length > 0 ? (
+            <div
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                overflowX: "auto",
+                marginBottom: 18,
+                background: "#ffffff",
+              }}
+            >
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                <thead>
+                  <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                    <th style={{ padding: "10px 16px", fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Carrier
+                    </th>
+                    <th style={{ padding: "10px 16px", fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Service
+                    </th>
+                    <th style={{ padding: "10px 16px", fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Carrier ID
+                    </th>
+                    <th style={{ padding: "10px 16px", fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.carriers.map((c: any, idx: number) => (
+                    <tr
+                      key={c.id}
+                      style={{
+                        borderBottom: idx === data.carriers.length - 1 ? "none" : "1px solid #f1f5f9",
+                      }}
+                    >
+                      <td style={{ padding: "12px 16px", verticalAlign: "middle" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          <div
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: 8,
+                              background: "#fdf2f4",
+                              color: "#de4066",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="1" y="3" width="15" height="13" />
+                              <polygon points="16 8 20 8 23 11 23 16 16 16 8" />
+                              <circle cx="5.5" cy="18.5" r="2.5" />
+                              <circle cx="18.5" cy="18.5" r="2.5" />
+                            </svg>
+                          </div>
+                          <span style={{ fontSize: 13.5, fontWeight: 600, color: "#111827" }}>
+                            {c.name}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563", verticalAlign: "middle" }}>
+                        {c.service || "All Services"}
+                      </td>
+                      <td style={{ padding: "12px 16px", verticalAlign: "middle" }}>
+                        <code
+                          style={{
+                            background: "#f3f4f6",
+                            color: "#374151",
+                            padding: "3px 8px",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {c.shippyproCarrierId}
+                        </code>
+                      </td>
+                      <td style={{ padding: "12px 16px", textAlign: "right", verticalAlign: "middle" }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            background: "#ecfdf5",
+                            color: "#059669",
+                            padding: "3px 10px",
+                            borderRadius: 9999,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          ✓ Synced
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div
