@@ -1,13 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useRef, useState, useEffect } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useFetcher, useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useFetcher, useLoaderData, useNavigation, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
 import { listEmailTemplates, upsertEmailTemplate, deleteEmailTemplate } from "../services/email-templates.server";
-import { sendEmail, renderTemplate } from "../services/email.server";
-import { wrapEmailHtml } from "../services/email-html";
+import { sendEmail, buildShopEmail } from "../services/email.server";
 import {
   getOrCreateSettings,
   updateSettings,
@@ -15,10 +14,22 @@ import {
   updateReturnFormCustomization,
   getReturnPolicy,
   updateReturnPolicy,
+  getEmailLayout,
+  updateEmailLayout,
 } from "../services/settings.server";
+import {
+  normalizeEmailLayout,
+  renderTemplate,
+  renderEmailDocument,
+  renderTemplateHtml,
+  SAMPLE_EMAIL_VARS,
+} from "../services/email-layout";
 import { DEFAULT_RETURN_POLICY_EN } from "../services/return-policy";
 import { SettingsLayout } from "../components/admin/SettingsLayout";
 import { ReturnFormPreview } from "../components/admin/ReturnFormPreview";
+import { EmailLayoutEditor } from "../components/admin/EmailLayoutEditor";
+import { EmailPreview } from "../components/admin/EmailPreview";
+import { wrapEmailHtml } from "../services/email-html";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -43,6 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     customization,
     DEFAULT_RETURN_FORM_CUSTOMIZATION,
     returnPolicy: getReturnPolicy(settings),
+    emailLayout: getEmailLayout(settings),
   };
 };
 
@@ -79,6 +91,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         storeName,
       });
       return { ok: true, message: "Palette saved successfully" };
+    }
+    if (intent === "save_email_layout") {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(String(formData.get("layout") || "{}"));
+      } catch {
+        return { ok: false, message: "Could not read the header and footer settings" };
+      }
+      const settings = await getOrCreateSettings(shop);
+      const layout = normalizeEmailLayout(raw, getEmailLayout(settings));
+      if (layout.logoUrl.startsWith("data:") && !/^data:image\/(png|jpeg|gif|webp);base64,/i.test(layout.logoUrl)) {
+        return { ok: false, message: "Logo must be a PNG, JPG, GIF or WebP image" };
+      }
+      if (layout.logoUrl.length > 450_000) {
+        return { ok: false, message: "Logo must be 300 KB or smaller" };
+      }
+      await updateEmailLayout(shop, layout);
+      return { ok: true, message: "Email header and footer saved" };
     }
     if (intent === "save_return_policy") {
       const policy = String(formData.get("policy") || "").trim();
@@ -117,28 +147,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
       // Use test variables so email has content during testing
-      const testVars = {
-        orderNumber: "#1021",
-        requestNumber: "GLM-1021",
-        customerName: "Test Customer",
-        items: "Jacket, Blue Shirt",
-        labelLink: "",
-        trackingLink: "",
-        returnsUrl: "/returns",
+      const { settings, html, text, vars } = await buildShopEmail(shop, templateBody, SAMPLE_EMAIL_VARS);
+      const subject = renderTemplate(templateSubject, vars);
+      const result = await sendEmail(to, subject, templateBody, settings.emailFrom || undefined, { html, text });
+      return {
+        ok: result.ok,
+        message: result.ok
+          ? `Template saved and test email sent to ${to}`
+          : `Template saved, but the test email was not sent: ${result.error || "unknown error"}`,
       };
-      const subject = renderTemplate(
-        templateSubject,
-        testVars
-      );
-      const renderedBody = renderTemplate(
-        templateBody,
-        testVars
-      );
-      const settings = await getOrCreateSettings(shop);
-      const customization = getReturnFormCustomization(settings);
-      const body = wrapEmailHtml(renderedBody, customization.storeName || "Grand Le Mar");
-      const result = await sendEmail(to, subject, body, settings.emailFrom || undefined);
-      return { ok: result.ok, message: result.ok ? "Template saved and test email sent" : "Template saved, but test email could not be sent" };
     }
     return { ok: false, message: "Unknown action" };
   } catch (e) {
@@ -151,17 +168,31 @@ const EVENT_OPTIONS = [
   "item_received", "replacement_sent", "store_credit_issued", "withdrawal",
 ];
 
-function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
+/** Plain-text templates (like the built-in defaults) lose their line breaks in a contentEditable; convert them to HTML first. */
+function bodyToEditorHtml(body?: string): string {
+  if (!body) return "";
+  if (/<\/?[a-z][\s\S]*>/i.test(body)) return body;
+  return body
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\r?\n/g, "<br>");
+}
+
+function RichTextEditor({ name, initial: rawInitial, onChange }: { name: string; initial?: string; onChange?: (html: string) => void }) {
+  const initial = bodyToEditorHtml(rawInitial);
   const editorRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
   const [htmlMode, setHtmlMode] = useState(false);
-  const [htmlSource, setHtmlSource] = useState(initial || "");
+  const [htmlSource, setHtmlSource] = useState(initial);
 
   useEffect(() => {
-    const value = initial || "";
+    const value = initial;
     if (editorRef.current) editorRef.current.innerHTML = value;
     if (hiddenRef.current) hiddenRef.current.value = value;
     setHtmlSource(value);
+    onChange?.(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
 
   const sync = () => {
@@ -169,6 +200,7 @@ function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
     const value = editorRef.current.innerHTML;
     if (hiddenRef.current) hiddenRef.current.value = value;
     setHtmlSource(value);
+    onChange?.(value);
   };
 
   const showHtmlSource = () => {
@@ -353,6 +385,7 @@ function RichTextEditor({ name, initial }: { name: string; initial?: string }) {
           onChange={(event) => {
             setHtmlSource(event.currentTarget.value);
             if (hiddenRef.current) hiddenRef.current.value = event.currentTarget.value;
+            onChange?.(event.currentTarget.value);
           }}
           style={{
             display: "block",
@@ -562,6 +595,11 @@ export default function EmailTemplatesPage() {
   const paletteFetcher = useFetcher<any>();
   const [isPaletteSaved, setIsPaletteSaved] = useState(false);
 
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const section: "form" | "policy" | "emails" =
+    tabParam === "policy" || tabParam === "emails" ? tabParam : "form";
+
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState("en");
@@ -580,6 +618,41 @@ export default function EmailTemplatesPage() {
     }
   }, [actionData]);
   const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
+
+  // Live preview of the template being created/edited, inside the shared header and footer.
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  useEffect(() => {
+    setDraftSubject(mode === "edit" && editingTemplate ? editingTemplate.subject : "");
+    if (mode === "create") setDraftBody("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, editingId]);
+  const previewVars = { ...SAMPLE_EMAIL_VARS, storeName: data.emailLayout.storeName, returnsUrl: data.returnsUrl };
+  const draftPreview = (
+    <div style={{ position: "sticky", top: 16, minWidth: 0 }}>
+      <EmailPreview
+        title="Live preview"
+        subject={renderTemplate(draftSubject, previewVars)}
+        from={data.emailFrom || undefined}
+        html={renderEmailDocument({
+          layout: data.emailLayout,
+          bodyHtml: renderTemplateHtml(draftBody, previewVars),
+          vars: previewVars,
+        })}
+      />
+      <p style={{ fontSize: 12, color: "#6b7280", margin: "8px 2px 0" }}>
+        Shown with sample order data. The header and footer are edited once, on the Customer emails tab.
+      </p>
+    </div>
+  );
+
+  // The template editor belongs to the Customer emails tab; close it when switching tabs.
+  useEffect(() => {
+    if (section !== "emails") {
+      setMode("list");
+      setEditingId(null);
+    }
+  }, [section]);
 
   const initialCustomization = data.customization || data.DEFAULT_RETURN_FORM_CUSTOMIZATION;
   const [primaryColor, setPrimaryColor] = useState(initialCustomization.primaryColor || "#de4066");
@@ -704,18 +777,18 @@ export default function EmailTemplatesPage() {
   });
 
   return (
-    <SettingsLayout activeTab="emails">
+    <SettingsLayout activeTab={section}>
       {actionData?.message && <div className="returbo-banner">{actionData.message}</div>}
 
       {mode === "list" && (
         <div className="returbo-email-page">
-          <section className="returbo-card returbo-email-section" style={{ background: "#ffffff", padding: "24px 28px" }}>
+          <section className="returbo-card returbo-email-section" style={{ background: "#ffffff", padding: "24px 28px", display: section === "form" ? undefined : "none" }}>
             <div className="returbo-card-header" style={{ marginBottom: 20 }}>
               <h2 className="returbo-card-title" style={{ fontSize: 20, fontWeight: 800, color: "#111827", margin: "0 0 6px 0" }}>
-                Customer return form customization
+                Return form design
               </h2>
               <p className="returbo-card-subtitle" style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
-                Manage your return form, logo, and email notifications to create a custom return experience that suits your brand.
+                Set the logo, store name, and colors customers see on the storefront return form.
               </p>
             </div>
 
@@ -1176,9 +1249,9 @@ export default function EmailTemplatesPage() {
             </div>
           </section>
 
-          <section className="returbo-card returbo-email-section">
+          <section className="returbo-card returbo-email-section" style={{ display: section === "policy" ? undefined : "none" }}>
             <div className="returbo-card-header" style={{ marginBottom: 0 }}>
-              <h2 className="returbo-card-title">Return policy form</h2>
+              <h2 className="returbo-card-title">Return policy</h2>
               <p className="returbo-card-subtitle">
                 A return policy helps the customer to know the timeframe for returns, complaints, exchanges, and what products are allowed to be returned.
               </p>
@@ -1479,12 +1552,23 @@ export default function EmailTemplatesPage() {
             </div>
           </section>
 
-          <section className="returbo-card returbo-email-customization-section" style={{ background: "#ffffff", padding: "28px 32px" }}>
-            <div className="returbo-email-section-header">
+          <div style={{ display: section === "emails" ? undefined : "none" }}>
+            <EmailLayoutEditor
+              initialLayout={data.emailLayout}
+              formLogoUrl={data.customization?.logoUrl || ""}
+              templates={data.templates}
+              returnsUrl={data.returnsUrl}
+              emailFrom={data.emailFrom}
+            />
+          </div>
+
+          <section className="returbo-card returbo-email-section" style={{ display: section === "emails" ? undefined : "none" }}>
+            <div className="returbo-card-header returbo-email-section-header">
               <div>
-                <h2 className="returbo-email-header-title">Customer notification emails customization</h2>
-                <p className="returbo-email-header-subtitle">
-                  Here you can personalize your email communication. These are the messages your customers will receive as soon as the status is updated. Please remember that if you have more than one communication language selected - make sure to write the same communication emails in another language.
+                <h2 className="returbo-card-title">Email messages</h2>
+                <p className="returbo-card-subtitle">The subject and message for each step of the return journey. They all use the header and footer above.</p>
+                <p className="returbo-card-subtitle">
+                  Use <code>{"{{returnsUrl}}"}</code> to link to your storefront returns page (<code>{data.returnsUrl}</code>).
                 </p>
               </div>
             </div>
@@ -1960,6 +2044,239 @@ export default function EmailTemplatesPage() {
               </div>
             )}
           </section>
+        </div>
+      )}
+
+      {mode === "create" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 20, alignItems: "start" }}>
+        <div className="returbo-card" style={{ minWidth: 0 }}>
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">New Email Template</h2>
+            <p className="returbo-card-subtitle">Create a localized email template for a return lifecycle event.</p>
+          </div>
+          <Form method="post">
+            <input type="hidden" name="_action" value="save_template" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Event
+                </label>
+                <select
+                  name="event"
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  {EVENT_OPTIONS.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Language
+                </label>
+                <select
+                  name="language"
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  <option value="en">English</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  name="subject"
+                  required
+                  placeholder="e.g. We received your return request ({{orderNumber}})"
+                  onChange={(e) => setDraftSubject(e.currentTarget.value)}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Content
+                </label>
+                <RichTextEditor name="body" onChange={setDraftBody} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 6, alignItems: "center" }}>
+                <button type="submit" className="returbo-btn-primary">
+                  Create template
+                </button>
+                <button
+                  type="button"
+                  className="returbo-btn-secondary"
+                  onClick={() => setMode("list")}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </Form>
+        </div>
+        {draftPreview}
+        </div>
+      )}
+
+      {mode === "edit" && editingTemplate && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 20, alignItems: "start" }}>
+        <div className="returbo-card" style={{ minWidth: 0 }}>
+          <div className="returbo-card-header">
+            <h2 className="returbo-card-title">Edit Template: {editingTemplate.event} ({editingTemplate.language})</h2>
+            <p className="returbo-card-subtitle">Update email subject, content, and test email delivery.</p>
+          </div>
+          <Form method="post">
+            <input ref={templateActionRef} type="hidden" name="_action" defaultValue="save_template" />
+            <input type="hidden" name="id" value={editingTemplate.id} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Event
+                </label>
+                <select
+                  name="event"
+                  defaultValue={editingTemplate.event}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  {EVENT_OPTIONS.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Language
+                </label>
+                <select
+                  name="language"
+                  defaultValue={editingTemplate.language}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38, background: "#ffffff" }}
+                >
+                  <option value="en">English</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  name="subject"
+                  required
+                  defaultValue={editingTemplate.subject}
+                  onChange={(e) => setDraftSubject(e.currentTarget.value)}
+                  className="returbo-detail-input"
+                  style={{ width: "100%", height: 38 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                  Content
+                </label>
+                <RichTextEditor name="body" initial={editingTemplate.body} onChange={setDraftBody} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 6, alignItems: "center" }}>
+                <button
+                  type="submit"
+                  className="returbo-btn-primary"
+                  onClick={() => {
+                    if (templateActionRef.current) templateActionRef.current.value = "save_template";
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className="returbo-btn-secondary"
+                  onClick={() => {
+                    setMode("list");
+                    setEditingId(null);
+                  }}
+                >
+                  Back to list
+                </button>
+              </div>
+            </div>
+
+          <div style={{ borderTop: "1px solid #f3f4f6", marginTop: 28, paddingTop: 20 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 4px 0", color: "#111827" }}>
+              Test Email Delivery
+            </h3>
+            <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 14px 0" }}>
+              Send a test email using sample order data to verify your template layout and delivery.
+            </p>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 300px", maxWidth: 440 }}>
+                  <label htmlFor="test-email-address" style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+                    Test email address
+                  </label>
+                  <input
+                    id="test-email-address"
+                    type="email"
+                    name="testEmail"
+                    placeholder="e.g. yourname@example.com"
+                    className="returbo-detail-input"
+                    style={{ width: "100%", height: 38 }}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="returbo-btn-primary"
+                  style={{ height: 38, padding: "8px 20px" }}
+                  onClick={() => {
+                    if (templateActionRef.current) templateActionRef.current.value = "test_send";
+                  }}
+                >
+                  Test send
+                </button>
+              </div>
+          </div>
+          </Form>
+
+          <div style={{ borderTop: "1px solid #f3f4f6", marginTop: 24, paddingTop: 20 }}>
+            <Form
+              method="post"
+              onSubmit={(e) => {
+                if (!window.confirm("Are you sure you want to delete this template?")) {
+                  e.preventDefault();
+                }
+              }}
+            >
+              <input type="hidden" name="_action" value="delete_template" />
+              <input type="hidden" name="id" value={editingTemplate.id} />
+              <button
+                type="submit"
+                className="returbo-btn-danger-outline"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Delete template
+              </button>
+            </Form>
+          </div>
+        </div>
+        {draftPreview}
         </div>
       )}
     </SettingsLayout>

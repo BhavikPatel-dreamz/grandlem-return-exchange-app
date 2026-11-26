@@ -207,7 +207,7 @@ s-page {
 }
 
 .returbo-settings-container {
-  max-width: 1128px;
+  max-width: 1300px;
 }
 
 /* White Content Cards - 10-12px radius, subtle border & soft shadow */
@@ -562,7 +562,7 @@ s-button[variant="secondary"]::part(button) {
 .returbo-email-page {
   display: grid;
   gap: 22px;
-  max-width: 1128px;
+  max-width: 1300px;
   margin: 0 auto;
 }
 

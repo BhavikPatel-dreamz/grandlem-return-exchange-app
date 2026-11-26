@@ -54,7 +54,7 @@ export default function DashboardPage() {
             >
               <h3 style={{ margin: "0 0 6px 0", fontSize: 16, color: "var(--returbo-text-primary)" }}>Settings</h3>
               <p style={{ margin: 0, fontSize: 13, color: "var(--returbo-text-muted)" }}>
-                Inspection, analytics, email templates, and policies.
+                Email templates and policies.
               </p>
             </Link>
           </div>
