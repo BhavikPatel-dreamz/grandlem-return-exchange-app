@@ -601,12 +601,6 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
       if (!warehouse.address1 || !warehouse.country) {
         throw new Error("Original shipment warehouse address unavailable; label not created to avoid routing to the wrong warehouse");
       }
-      if (!warehouse.phone) {
-        // ShippyPro requires a phone: take it from the configured return address or the Shopify location.
-        const configuredPhone = [warehouseMap[marketKey], warehouseMap["DEFAULT"]].find((a) => a?.phone)?.phone;
-        const locationPhone = configuredPhone ? null : (await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId))?.phone;
-        warehouse = { ...warehouse, phone: configuredPhone || locationPhone || "" };
-      }
     } else {
       // No original shipment: the return address configured in Settings wins,
       // the Shopify fulfillment location is only a last resort.
@@ -614,6 +608,14 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
       warehouse = configured
         || await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId)
         || { country: "", city: "" };
+    }
+
+    if (!warehouse.phone) {
+      // ShippyPro requires a phone. Use the phone saved in Settings for this market
+      // (or Default), even when the rest of that address is empty; then the Shopify location.
+      const configuredPhone = [warehouseMap[marketKey], warehouseMap["DEFAULT"]].find((a) => a?.phone?.trim())?.phone?.trim();
+      const locationPhone = configuredPhone ? null : (await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId))?.phone;
+      warehouse = { ...warehouse, phone: configuredPhone || locationPhone || "" };
     }
 
     const orderAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
