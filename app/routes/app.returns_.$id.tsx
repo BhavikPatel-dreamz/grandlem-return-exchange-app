@@ -206,6 +206,11 @@ async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumb
   return { ok: true };
 }
 
+// Only requests still waiting for review can be approved or rejected.
+// The status check and the update happen in one statement, so a double
+// click or a second tab cannot approve (and ship) the same request twice.
+const REVIEWABLE_STATUSES = ["Submitted", "Pending Approval"];
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -224,10 +229,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   try {
     if (intent === "approve") {
-      await prisma.returnRequest.update({
-        where: { id: actualId },
+      const claimed = await prisma.returnRequest.updateMany({
+        where: { id: actualId, shop, status: { in: REVIEWABLE_STATUSES } },
         data: { status: "Approved", approvedAt: new Date() },
       });
+      if (claimed.count === 0) {
+        return { ok: false, intent: "review", message: `This request is already ${rr.status.toLowerCase()} and cannot be approved again.` };
+      }
       const emailResult = await sendApprovedReturnEmail(shop, rr);
       if (!emailResult.ok) {
         return { ok: false, intent, message: `Request approved, but ${emailResult.error}. The approval email was not sent.` };
@@ -246,10 +254,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     if (intent === "reject") {
       const reason = String(formData.get("rejectionReason") || "").trim();
-      await prisma.returnRequest.update({
-        where: { id: actualId },
+      const claimed = await prisma.returnRequest.updateMany({
+        where: { id: actualId, shop, status: { in: REVIEWABLE_STATUSES } },
         data: { status: "Rejected", rejectedAt: new Date(), rejectionReason: reason },
       });
+      if (claimed.count === 0) {
+        return { ok: false, intent: "review", message: `This request is already ${rr.status.toLowerCase()} and cannot be rejected.` };
+      }
       await sendEventEmail(shop, "rejected", "en", rr.customerEmail || "", {
         customerName: rr.customerEmail || "customer",
         orderNumber: rr.orderNumber,
