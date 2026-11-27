@@ -18,7 +18,10 @@ export type PortalErrorCode =
 export type PortalLineItem = {
   id: string;
   title: string;
+  // Quantity that can still be requested: fulfilled quantity minus quantities
+  // already in non-rejected requests. `purchasedQuantity` is the original.
   quantity: number;
+  purchasedQuantity: number;
   variantId: string | null;
   productId: string | null;
   collectionIds: string[];
@@ -77,13 +80,50 @@ function getOrderCustomerName(
   return [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || shippingName || null;
 }
 
-async function hasExistingReturnRequest(shop: string, orderId: string): Promise<boolean> {
+// Requests in these statuses no longer hold their quantities.
+const RELEASED_STATUSES = ["Rejected", "Cancelled"];
+
+/** Quantity per line item already in open (not rejected) requests for this order. */
+async function requestedQuantities(shop: string, orderId: string): Promise<Map<string, number>> {
   const numericId = orderId.split("/").pop() || orderId;
-  const existing = await prisma.returnRequest.findFirst({
-    where: { shop, type: "return", shopifyOrderId: { in: [numericId, orderId] } },
-    select: { id: true },
+  const requests = await prisma.returnRequest.findMany({
+    where: { shop, shopifyOrderId: { in: [numericId, orderId] }, status: { notIn: RELEASED_STATUSES } },
+    include: { items: true },
   });
-  return Boolean(existing);
+  const totals = new Map<string, number>();
+  for (const r of requests) {
+    for (const it of r.items) {
+      if (!it.shopifyLineItemId) continue;
+      totals.set(it.shopifyLineItemId, (totals.get(it.shopifyLineItemId) ?? 0) + (it.quantity || 0));
+    }
+  }
+  return totals;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapLineItems(node: any, requested: Map<string, number>): PortalLineItem[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (node.lineItems?.edges ?? []).map((e: any) => {
+    const n = e.node;
+    const purchased = Number(n.quantity) || 0;
+    // Removed/refunded units drop out of currentQuantity; unfulfilled units were never shipped.
+    const shipped = (Number.isFinite(n.currentQuantity) ? n.currentQuantity : purchased)
+      - (Number.isFinite(n.unfulfilledQuantity) ? n.unfulfilledQuantity : 0);
+    const remaining = Math.max(0, shipped - (requested.get(n.id) ?? 0));
+    return {
+      id: n.id,
+      title: n.title,
+      quantity: remaining,
+      purchasedQuantity: purchased,
+      variantId: n.variant?.id ?? null,
+      productId: n.variant?.product?.id ?? null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
+      excluded: remaining === 0,
+      variantPrice: n.variant?.price ?? null,
+      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
+    };
+  });
 }
 
 const ORDER_QUERY = `#graphql
@@ -111,6 +151,8 @@ const ORDER_QUERY = `#graphql
                 id
                 title
                 quantity
+                currentQuantity
+                unfulfilledQuantity
                 variant {
                   id
                   price
@@ -183,41 +225,8 @@ async function validateOrderNode(
     return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
   }
 
-  if (requestType === "return" && await hasExistingReturnRequest(shop, String(node.id))) {
-    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
-    const n = e.node;
-    return {
-      id: n.id,
-      title: n.title,
-      quantity: n.quantity,
-      variantId: n.variant?.id ?? null,
-      productId: n.variant?.product?.id ?? null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
-      excluded: false,
-      variantPrice: n.variant?.price ?? null,
-      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
-    };
-  });
-
+  const lineItems = mapLineItems(node, await requestedQuantities(shop, String(node.id)));
   const shopifyOrderId = String(node.id).split("/").pop() || node.id;
-
-  // Fetch already-returned line items for this order. Requests store the order
-  // GID (createReturnRequest gets `order.id`); match the numeric id too for older rows.
-  const existingRequests = await prisma.returnRequest.findMany({
-    where: { shop, shopifyOrderId: { in: [shopifyOrderId, String(node.id)] } },
-    include: { items: true },
-  });
-  const returnedLineItemIds = new Set<string>();
-  for (const r of existingRequests) {
-    for (const it of r.items) {
-      if (it.shopifyLineItemId) returnedLineItemIds.add(it.shopifyLineItemId);
-    }
-  }
 
   // Apply exclusion + already-returned flags.
   let eligibleCount = 0;
@@ -228,7 +237,7 @@ async function validateOrderNode(
       variantId: item.variantId ?? undefined,
       collectionIds: item.collectionIds,
     }, requestType);
-    item.excluded = excluded || returnedLineItemIds.has(item.id);
+    item.excluded = excluded || item.quantity === 0;
     if (!item.excluded) {
       eligibleCount += 1;
       eligibleLineItemIds.push(item.id);
@@ -304,6 +313,8 @@ const ORDER_BY_ID_QUERY = `#graphql
             id
             title
             quantity
+            currentQuantity
+            unfulfilledQuantity
             variant {
               id
               price
@@ -451,32 +462,16 @@ export async function lookupAndValidateOrderBasic(
     return { ok: false, code: "EMAIL_MISMATCH", message: "Email does not match the order." };
   }
 
-  if (await hasExistingReturnRequest(shop, String(node.id))) {
-    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
-  }
-
   const fulfillmentStatus = node.displayFulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
     return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
-    const n = e.node;
-    return {
-      id: n.id,
-      title: n.title,
-      quantity: n.quantity,
-      variantId: n.variant?.id ?? null,
-      productId: n.variant?.product?.id ?? null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
-      excluded: false,
-      variantPrice: n.variant?.price ?? null,
-      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
-    };
-  });
+  const lineItems = mapLineItems(node, await requestedQuantities(shop, String(node.id)));
+  if (lineItems.length > 0 && lineItems.every((li) => li.quantity === 0)) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
 
   const allReasons = await listReturnReasons(shop, true);
 
@@ -493,7 +488,7 @@ export async function lookupAndValidateOrderBasic(
       lineItems,
       market: node.shippingAddress?.countryCodeV2 ?? null,
     },
-    eligibleLineItemIds: lineItems.map((li) => li.id),
+    eligibleLineItemIds: lineItems.filter((li) => li.quantity > 0).map((li) => li.id),
     deadline: new Date().toISOString(),
     requestType: "return",
     reasons: allReasons.map((r) => ({
@@ -524,32 +519,16 @@ export async function lookupOrderForCustomerBasic(
     return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found." };
   }
 
-  if (await hasExistingReturnRequest(shop, String(node.id))) {
-    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
-  }
-
   const fulfillmentStatus = node.displayFulfillmentStatus;
   const fulfilled = ["FULFILLED", "IN_PROGRESS", "PARTIALLY_FULFILLED"].includes(fulfillmentStatus);
   if (!fulfilled) {
     return { ok: false, code: "NOT_FULFILLED", message: "Order has not been fulfilled yet." };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lineItems: PortalLineItem[] = (node.lineItems?.edges ?? []).map((e: any) => {
-    const n = e.node;
-    return {
-      id: n.id,
-      title: n.title,
-      quantity: n.quantity,
-      variantId: n.variant?.id ?? null,
-      productId: n.variant?.product?.id ?? null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      collectionIds: (n.variant?.product?.collections?.edges ?? []).map((c: any) => c.node.id),
-      excluded: false,
-      variantPrice: n.variant?.price ?? null,
-      variantImage: n.variant?.image ? { url: n.variant.image.url, altText: n.variant.image.altText } : null,
-    };
-  });
+  const lineItems = mapLineItems(node, await requestedQuantities(shop, String(node.id)));
+  if (lineItems.length > 0 && lineItems.every((li) => li.quantity === 0)) {
+    return { ok: false, code: "ALREADY_REQUESTED", message: portalErrorCodeToMessage("ALREADY_REQUESTED") };
+  }
 
   const allReasons = await listReturnReasons(shop, true);
 
@@ -566,7 +545,7 @@ export async function lookupOrderForCustomerBasic(
       lineItems,
       market: node.shippingAddress?.countryCodeV2 ?? null,
     },
-    eligibleLineItemIds: lineItems.map((li) => li.id),
+    eligibleLineItemIds: lineItems.filter((li) => li.quantity > 0).map((li) => li.id),
     deadline: new Date().toISOString(),
     requestType: "return",
     reasons: allReasons.map((r) => ({
@@ -586,7 +565,7 @@ export function portalErrorCodeToMessage(code: PortalErrorCode): string {
     NOT_FULFILLED: "Order has not been fulfilled yet.",
     DEADLINE_EXPIRED: "Return deadline has expired.",
     ALL_ITEMS_EXCLUDED_OR_RETURNED: "All items are excluded or already returned.",
-    ALREADY_REQUESTED: "A return request has already been submitted for this order.",
+    ALREADY_REQUESTED: "Every item in this order is already part of a return or exchange request.",
     INVALID_INPUT: "Please fill in all required fields.",
   };
   return messages[code];
