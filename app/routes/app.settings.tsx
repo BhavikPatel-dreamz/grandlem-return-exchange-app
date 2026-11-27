@@ -15,6 +15,7 @@ import {
   updateReturnImageCommentConfig,
 } from "../services/settings.server";
 import prisma from "../db.server";
+import { toCountryCode } from "../services/country-code";
 import {
   listReturnReasons,
   createReturnReason,
@@ -31,7 +32,7 @@ import {
   upsertDeadlineExtension,
   deleteDeadlineExtension,
 } from "../services/deadline-extensions.server";
-import { syncCarriers, setShippyproApiKey, getShippyproConnection } from "../services/shippypro.server";
+import { syncCarriers, saveShippyproConnection, getShippyproConnection, maskShippyproKey } from "../services/shippypro.server";
 
 const ROUTING_MARKETS = ["DEFAULT", "US", "SE", "GB"] as const;
 const DEADLINE_UNIT_DAYS = { days: 1, weeks: 7, months: 30 } as const;
@@ -46,6 +47,19 @@ function deadlineDisplay(days: number) {
   if (days > 0 && days % 30 === 0) return { amount: days / 30, unit: "months" };
   if (days > 0 && days % 7 === 0) return { amount: days / 7, unit: "weeks" };
   return { amount: days, unit: "days" };
+}
+
+type ReturnMethod = {
+  carrierId?: string;
+  service?: string;
+  // Fallback parcel when the original outbound shipment cannot be found.
+  parcel?: { weight: number; length: number; width: number; height: number };
+};
+
+function parseParcel(formData: FormData, market: string): ReturnMethod["parcel"] | null {
+  const read = (field: string) => Number(String(formData.get(`parcel${field}_${market}`) || "").replace(",", "."));
+  const parcel = { weight: read("Weight"), length: read("Length"), width: read("Width"), height: read("Height") };
+  return Object.values(parcel).every((v) => Number.isFinite(v) && v > 0) ? parcel : null;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -72,17 +86,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       claimMinPhotos: settings.claimMinPhotos,
       claimMinCommentLength: settings.claimMinCommentLength,
       labelTimingPerMarket: parseJson<Record<string, string>>(settings.labelTimingPerMarket, {}),
-      defaultReturnMethodPerMarket: parseJson<Record<string, { carrierId?: string; service?: string }>>(settings.defaultReturnMethodPerMarket, {}),
+      defaultReturnMethodPerMarket: parseJson<Record<string, ReturnMethod>>(settings.defaultReturnMethodPerMarket, {}),
       warehouseAddressesPerMarket: parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {}),
     },
     reasons,
     exclusions,
     deadlineExtensions,
-    shippypro: await getShippyproConnection(shop),
+    shippypro: await (async () => {
+      const connection = await getShippyproConnection(shop);
+      // Only the masked hint goes to the browser, never the key itself.
+      return { ...connection, maskedKey: connection.hasKey ? maskShippyproKey(connection.hint) : "" };
+    })(),
     carriers: await prisma.carrier.findMany({
       where: { shop },
       orderBy: { name: "asc" },
       select: { id: true, shippyproCarrierId: true, name: true, service: true, syncedAt: true },
+    }),
+    courierServices: await prisma.courierService.findMany({
+      where: { shop },
+      orderBy: { service: "asc" },
+      select: { shippyproCarrierId: true, service: true },
     }),
     returnImageCommentConfig: getReturnImageCommentConfig(settings),
   };
@@ -118,7 +141,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "save_routing_settings") {
       const current = await getOrCreateSettings(shop);
       const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
-      const methods = parseJson<Record<string, { carrierId?: string; service?: string }>>(current.defaultReturnMethodPerMarket, {});
+      const methods = parseJson<Record<string, ReturnMethod>>(current.defaultReturnMethodPerMarket, {});
       const warehouses = parseJson<Record<string, Record<string, string>>>(current.warehouseAddressesPerMarket, {});
 
       for (const market of ROUTING_MARKETS) {
@@ -126,19 +149,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           ? "immediate"
           : "after_approval";
 
-        const method = {
+        const parcel = parseParcel(formData, market);
+        const method: ReturnMethod = {
           carrierId: String(formData.get(`carrierId_${market}`) || "").trim(),
           service: String(formData.get(`service_${market}`) || "").trim(),
+          ...(parcel ? { parcel } : {}),
         };
-        if (method.carrierId || method.service) methods[market] = method;
+        if (method.carrierId || method.service || method.parcel) methods[market] = method;
         else delete methods[market];
 
         const address = Object.fromEntries(
-          ["name", "company", "address1", "address2", "city", "zip", "country"].map((field) => [
+          ["name", "company", "address1", "address2", "city", "zip", "country", "phone"].map((field) => [
             field,
             String(formData.get(`${field}_${market}`) || "").trim(),
           ]),
         );
+        // ShippyPro only accepts 2-letter country codes.
+        if (address.country) address.country = toCountryCode(address.country);
         if (Object.values(address).some(Boolean)) warehouses[market] = address;
         else delete warehouses[market];
       }
@@ -279,7 +306,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (intent === "save_shippypro_key") {
-      await setShippyproApiKey(
+      await saveShippyproConnection(
         shop,
         String(formData.get("shippyproApiKey") || ""),
         String(formData.get("shippyproApiUrl") || "").trim() || null,
@@ -855,15 +882,22 @@ export function SettingsView() {
                   ShippyPro API key <span style={{ color: "#de4066" }}>*</span>
                 </label>
                 <input
+                  key={data.shippypro.maskedKey}
                   id="shippyproApiKey"
-                  type="password"
+                  type="text"
                   name="shippyproApiKey"
-                  placeholder={data.shippypro.hasKey ? "Enter new API key to replace current" : "Enter your ShippyPro API key"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  defaultValue={data.shippypro.maskedKey}
+                  onFocus={(e) => e.currentTarget.select()}
+                  placeholder="Enter your ShippyPro API key"
                   className="returbo-detail-input"
-                  style={{ width: "100%", height: 38 }}
+                  style={{ width: "100%", height: 38, fontFamily: data.shippypro.hasKey ? "monospace" : undefined }}
                 />
                 <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                  Generate your API key in ShippyPro &gt; Integrations &gt; API.
+                  {data.shippypro.hasKey
+                    ? "A key is saved (only the last 4 characters are shown). Type a new key to replace it; leave it as is to keep it."
+                    : "Generate your API key in ShippyPro > Integrations > API."}
                 </p>
               </div>
 
@@ -875,7 +909,8 @@ export function SettingsView() {
                   id="shippyproApiUrl"
                   type="text"
                   name="shippyproApiUrl"
-                  defaultValue={data.shippypro.apiUrl || ""}
+                  key={data.shippypro.apiUrl || "default"}
+                  defaultValue={data.shippypro.apiUrl || "https://api.shippypro.com/v1"}
                   placeholder="https://api.shippypro.com/v1"
                   className="returbo-detail-input"
                   style={{ width: "100%", height: 38 }}
@@ -1277,41 +1312,14 @@ export function SettingsView() {
                         </p>
                       </div>
 
-                      <div>
-                        <label htmlFor={`carrierId_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                          ShippyPro carrier ID
-                        </label>
-                        <input
-                          id={`carrierId_${market}`}
-                          type="text"
-                          name={`carrierId_${market}`}
-                          defaultValue={method.carrierId || ""}
-                          placeholder="e.g. 101, DHL, UPS"
-                          className="returbo-detail-input"
-                          style={{ width: "100%", height: 38 }}
-                        />
-                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                          Carrier ID from your ShippyPro connected carriers.
-                        </p>
-                      </div>
-
-                      <div>
-                        <label htmlFor={`service_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                          Carrier service
-                        </label>
-                        <input
-                          id={`service_${market}`}
-                          type="text"
-                          name={`service_${market}`}
-                          defaultValue={method.service || ""}
-                          placeholder="e.g. Standard, Express, Return"
-                          className="returbo-detail-input"
-                          style={{ width: "100%", height: 38 }}
-                        />
-                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                          Rate or service code (e.g. Express, Ground).
-                        </p>
-                      </div>
+                      <CarrierServicePicker
+                        key={`${market}-${method.carrierId || ""}-${method.service || ""}`}
+                        market={market}
+                        carriers={data.carriers}
+                        courierServices={data.courierServices}
+                        defaultCarrierId={method.carrierId || ""}
+                        defaultService={method.service || ""}
+                      />
                     </div>
                   </div>
 
@@ -1446,11 +1454,55 @@ export function SettingsView() {
                             type="text"
                             name={`country_${market}`}
                             defaultValue={address.country || (market === "DEFAULT" ? "" : market)}
-                            placeholder="e.g. Sweden, SE, US"
+                            placeholder="2-letter code, e.g. SE, US, GB"
                             className="returbo-detail-input"
                             style={{ width: "100%", height: 38 }}
                           />
                         </div>
+                        <div>
+                          <label htmlFor={`phone_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            Phone
+                          </label>
+                          <input
+                            id={`phone_${market}`}
+                            type="tel"
+                            name={`phone_${market}`}
+                            defaultValue={address.phone || ""}
+                            placeholder="Required by ShippyPro, e.g. +46 8 123 456"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+                      </div>
+                      <p style={{ margin: "16px 0 6px", fontSize: 12.5, fontWeight: 600, color: "#374151" }}>
+                        Fallback parcel
+                      </p>
+                      <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "#64748b" }}>
+                        Return labels reuse the parcel size of the original shipment. These values are used only when that shipment cannot be found in ShippyPro.
+                      </p>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 14 }}>
+                        {([
+                          ["Weight", "Weight (kg)", method.parcel?.weight],
+                          ["Length", "Length (cm)", method.parcel?.length],
+                          ["Width", "Width (cm)", method.parcel?.width],
+                          ["Height", "Height (cm)", method.parcel?.height],
+                        ] as const).map(([field, label, value]) => (
+                          <div key={field}>
+                            <label htmlFor={`parcel${field}_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                              {label}
+                            </label>
+                            <input
+                              id={`parcel${field}_${market}`}
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              name={`parcel${field}_${market}`}
+                              defaultValue={value ?? ""}
+                              className="returbo-detail-input"
+                              style={{ width: "100%", height: 38 }}
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -1489,6 +1541,93 @@ export function SettingsView() {
         </div>
       </div>
     </SettingsLayout>
+  );
+}
+
+const PICKER_LABEL_STYLE = { display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 } as const;
+const PICKER_HINT_STYLE = { margin: "4px 0 0", fontSize: 11.5, color: "#64748b" } as const;
+
+/** Carrier + service dropdowns filled from the carriers synced from ShippyPro. */
+function CarrierServicePicker({
+  market,
+  carriers,
+  courierServices,
+  defaultCarrierId,
+  defaultService,
+}: {
+  market: string;
+  carriers: { shippyproCarrierId: string; name: string; service: string | null }[];
+  courierServices: { shippyproCarrierId: string; service: string | null }[];
+  defaultCarrierId: string;
+  defaultService: string;
+}) {
+  const [carrierId, setCarrierId] = useState(defaultCarrierId);
+  const [service, setService] = useState(defaultService);
+
+  const services = Array.from(new Set([
+    ...courierServices.filter((s) => s.shippyproCarrierId === carrierId).map((s) => s.service),
+    carriers.find((c) => c.shippyproCarrierId === carrierId)?.service,
+  ].filter((s): s is string => Boolean(s))));
+  // Keep a previously saved value visible even if it is no longer synced.
+  const unknownCarrier = carrierId && !carriers.some((c) => c.shippyproCarrierId === carrierId);
+  const unknownService = service && !services.includes(service);
+  const isMarketRule = market !== "DEFAULT";
+
+  return (
+    <>
+      <div>
+        <label htmlFor={`carrierId_${market}`} style={PICKER_LABEL_STYLE}>
+          Return carrier
+        </label>
+        <select
+          id={`carrierId_${market}`}
+          name={`carrierId_${market}`}
+          value={carrierId}
+          onChange={(e) => {
+            setCarrierId(e.target.value);
+            setService("");
+          }}
+          className="returbo-detail-input"
+          style={{ width: "100%", height: 38 }}
+          disabled={carriers.length === 0 && !carrierId}
+        >
+          <option value="">{isMarketRule ? "Use the Default rule's carrier" : "Select a carrier"}</option>
+          {carriers.map((c) => (
+            <option key={c.shippyproCarrierId} value={c.shippyproCarrierId}>
+              {c.name} (ID {c.shippyproCarrierId})
+            </option>
+          ))}
+          {unknownCarrier && <option value={carrierId}>ID {carrierId} (not in synced carriers)</option>}
+        </select>
+        <p style={PICKER_HINT_STYLE}>
+          {carriers.length === 0
+            ? "No carriers synced yet. Use “Re-sync carriers” in the ShippyPro carriers section above."
+            : "Used when the original shipment cannot be found in ShippyPro."}
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor={`service_${market}`} style={PICKER_LABEL_STYLE}>
+          Carrier service
+        </label>
+        <select
+          id={`service_${market}`}
+          name={`service_${market}`}
+          value={service}
+          onChange={(e) => setService(e.target.value)}
+          className="returbo-detail-input"
+          style={{ width: "100%", height: 38 }}
+          disabled={!carrierId}
+        >
+          <option value="">{services.length > 0 ? "Carrier's default service" : "No services synced for this carrier"}</option>
+          {services.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+          {unknownService && <option value={service}>{service} (not synced)</option>}
+        </select>
+        <p style={PICKER_HINT_STYLE}>Services come from the carrier&apos;s ShippyPro connection.</p>
+      </div>
+    </>
   );
 }
 

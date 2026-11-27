@@ -26,7 +26,7 @@ export type SettingsInput = {
   claimMinPhotos?: number;
   claimMinCommentLength?: number;
   labelTimingPerMarket?: Record<string, "immediate" | "after_approval">;
-  defaultReturnMethodPerMarket?: Record<string, { carrierId?: string; service?: string }>;
+  defaultReturnMethodPerMarket?: Record<string, { carrierId?: string; service?: string; parcel?: { weight: number; length: number; width: number; height: number } }>;
   warehouseAddressesPerMarket?: Record<string, Record<string, string>>;
 };
 

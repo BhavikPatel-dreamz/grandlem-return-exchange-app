@@ -6,13 +6,15 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
-import { createReturnLabel, fetchWarehouseAddress, voidReturnLabel } from "../services/shippypro.server";
+import { confirmNoShipment, createReturnLabel, fetchWarehouseAddress, previewReturnShipment, voidReturnLabel } from "../services/shippypro.server";
+import { RETRYABLE_LABEL_STATUSES } from "../services/label-status";
 import { applyReplacementVariants, createExchangePaymentLink } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
 import { performRestock } from "../services/restock.server";
 import { issueRefund } from "../services/refunds.server";
 import { createReplacementOrder } from "../services/replacement.server";
 import { decodeReason } from "../services/return-reasons.server";
+import { isTestShop, liveTestLabelsEnabled } from "../services/test-mode.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -172,10 +174,21 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     reason: item.reason ? decodeReason(item.reason) : null,
   }));
 
-  return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress };
+  const testMode = isTestShop(shop) ? { liveLabels: liveTestLabelsEnabled() } : null;
+  return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress, testMode };
 };
 
-async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumber: string | null; customerEmail: string | null }) {
+type ApprovalEmailRequest = {
+  id: string;
+  type: string;
+  orderNumber: string | null;
+  customerEmail: string | null;
+  customerName: string | null;
+  items?: { title: string | null }[];
+};
+
+/** Creates (or reuses) the return label, then emails it. Returns and exchanges get their own template. */
+async function sendApprovedReturnEmail(shop: string, rr: ApprovalEmailRequest) {
   if (!rr.customerEmail) return { ok: false, error: "Customer email is missing" };
 
   let label = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
@@ -189,9 +202,11 @@ async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumb
   if (!label?.labelUrl) return { ok: false, error: "No return label URL was generated" };
 
   try {
-    const result = await sendEventEmail(shop, "approved", "en", rr.customerEmail, {
-      customerName: rr.customerEmail,
+    const event = rr.type === "exchange" ? "exchange_approved" : "approved";
+    const result = await sendEventEmail(shop, event, "en", rr.customerEmail, {
+      customerName: rr.customerName || rr.customerEmail,
       orderNumber: rr.orderNumber,
+      items: (rr.items ?? []).map((it) => it.title).filter(Boolean).join(", "),
       labelLink: label.labelUrl,
       trackingLink: label.trackingUrl || "",
     });
@@ -205,6 +220,13 @@ async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumb
   });
   return { ok: true };
 }
+
+// Only requests still waiting for review can be approved or rejected.
+// The status check and the update happen in one statement, so a double
+// click or a second tab cannot approve (and ship) the same request twice.
+const REVIEWABLE_STATUSES = ["Submitted", "Pending Approval"];
+// An exchange waiting for its price-difference payment can still be rejected.
+const REJECTABLE_STATUSES = [...REVIEWABLE_STATUSES, "Awaiting Payment"];
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -224,34 +246,41 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   try {
     if (intent === "approve") {
-      await prisma.returnRequest.update({
-        where: { id: actualId },
+      const claimed = await prisma.returnRequest.updateMany({
+        where: { id: actualId, shop, status: { in: REVIEWABLE_STATUSES } },
         data: { status: "Approved", approvedAt: new Date() },
       });
+      if (claimed.count === 0) {
+        return { ok: false, intent: "review", message: `This request is already ${rr.status.toLowerCase()} and cannot be approved again.` };
+      }
       const emailResult = await sendApprovedReturnEmail(shop, rr);
       if (!emailResult.ok) {
-        return { ok: false, intent, message: `Request approved, but ${emailResult.error}. The approval email was not sent.` };
+        return { ok: false, intent, message: `Request approved, but ${emailResult.error?.replace(/\.+$/, "")}. The approval email was not sent.` };
       }
       return { ok: true, intent, message: "Request approved and email sent with the return label" };
     }
     if (intent === "retry_approval_email") {
-      if (rr.status !== "Approved") {
-        return { ok: false, intent, message: "Approve the return before retrying its approval email." };
+      const approvedExchange = rr.type === "exchange" && ["Awaiting Payment", "Paid"].includes(rr.status);
+      if (rr.status !== "Approved" && !approvedExchange) {
+        return { ok: false, intent, message: "Approve the request before retrying its approval email." };
       }
       const emailResult = await sendApprovedReturnEmail(shop, rr);
       if (!emailResult.ok) {
-        return { ok: false, intent, message: `Retry failed: ${emailResult.error}. The approval email was not sent.` };
+        return { ok: false, intent, message: `Retry failed: ${emailResult.error?.replace(/\.+$/, "")}. The approval email was not sent.` };
       }
       return { ok: true, intent, message: "Approval email sent with the return label" };
     }
     if (intent === "reject") {
       const reason = String(formData.get("rejectionReason") || "").trim();
-      await prisma.returnRequest.update({
-        where: { id: actualId },
+      const claimed = await prisma.returnRequest.updateMany({
+        where: { id: actualId, shop, status: { in: REJECTABLE_STATUSES } },
         data: { status: "Rejected", rejectedAt: new Date(), rejectionReason: reason },
       });
+      if (claimed.count === 0) {
+        return { ok: false, intent: "review", message: `This request is already ${rr.status.toLowerCase()} and cannot be rejected.` };
+      }
       await sendEventEmail(shop, "rejected", "en", rr.customerEmail || "", {
-        customerName: rr.customerEmail || "customer",
+        customerName: rr.customerName || rr.customerEmail || "customer",
         orderNumber: rr.orderNumber,
         reason,
       }).catch(() => null);
@@ -269,10 +298,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
       return { ok: true, intent: "regenerate_label", message: "Shipping label generated" };
     }
+    if (intent === "preview_shipment") {
+      const preview = await previewReturnShipment(actualId);
+      if (!preview.ok) return { ok: false, intent, message: `Shipment cannot be created yet: ${preview.error}` };
+      return { ok: true, intent, preview };
+    }
+    if (intent === "confirm_no_shipment") {
+      const result = await confirmNoShipment(actualId);
+      if (!result.ok) return { ok: false, intent, message: result.error || "Nothing to confirm" };
+      return { ok: true, intent, message: "Marked as not created. You can now generate the label again." };
+    }
     if (intent === "void_label") {
       const result = await voidReturnLabel(actualId);
       if (!result.ok) return { ok: false, intent: "void_label", message: result.error || "Unable to void shipping label" };
-      return { ok: true, message: "Label voided with ShippyPro" };
+      return { ok: true, message: "Shipment voided in ShippyPro. You can now create the label again (Retry label & email)." };
     }
     if (intent === "restock_update") {
       if (rr.type === "complaint") {
@@ -318,7 +357,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const result = await createExchangePaymentLink(shop, actualId, rr.customerEmail);
       if (result.required) {
         const emailResult = await sendEventEmail(shop, "payment_required", "en", rr.customerEmail || "", {
-          customerName: rr.customerEmail || "customer",
+          customerName: rr.customerName || rr.customerEmail || "customer",
           orderNumber: rr.orderNumber,
           amount: result.total.toFixed(2),
           paymentLink: result.invoiceUrl || "",
@@ -327,10 +366,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           return { ok: false, message: `Exchange invoice created, but its email could not be sent. Share this Shopify link with the customer: ${result.invoiceUrl}` };
         }
       }
+      // The customer still sends the original item back: label + exchange email.
+      const labelEmail = await sendApprovedReturnEmail(shop, rr);
+      const labelNote = labelEmail.ok
+        ? " Return label emailed to the customer."
+        : ` The return label email was not sent: ${labelEmail.error}.`;
       if (!result.required) {
-        return { ok: true, message: `No additional payment required. Replacement order created: ${result.orderId}` };
+        return { ok: labelEmail.ok, intent, message: `No additional payment required. Replacement order created: ${result.orderId}.${labelNote}` };
       }
-      return { ok: true, message: `Payment link created: ${result.invoiceUrl}` };
+      return { ok: labelEmail.ok, intent, message: `Payment link created: ${result.invoiceUrl}.${labelNote}` };
     }
     if (intent === "status_update") {
       const status = String(formData.get("status") || rr.status);
@@ -361,6 +405,66 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
+type ShipmentPreview = Extract<Awaited<ReturnType<typeof previewReturnShipment>>, { ok: true }>;
+
+function formatAddress(address: Record<string, string>) {
+  return [address.name, address.company, address.street1, address.street2, address.city, address.state, address.zip, address.country]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function ShipmentPreviewPanel({ preview }: { preview: ShipmentPreview }) {
+  return (
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13 }}>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>Shipment that will be sent to ShippyPro</div>
+      <table className="returbo-detail-info-table">
+        <tbody>
+          <tr><td className="returbo-detail-info-label">From (customer)</td><td className="returbo-detail-info-val">{formatAddress(preview.from)}{preview.from.phone ? ` · ${preview.from.phone}` : ""}</td></tr>
+          <tr><td className="returbo-detail-info-label">To (return warehouse)</td><td className="returbo-detail-info-val">{formatAddress(preview.to)}{preview.to.phone ? ` · ${preview.to.phone}` : ""}</td></tr>
+          <tr><td className="returbo-detail-info-label">Carrier</td><td className="returbo-detail-info-val">{preview.carrier || "—"}</td></tr>
+          <tr><td className="returbo-detail-info-label">Parcel</td><td className="returbo-detail-info-val">{preview.parcels.map((p) => `${p.weight} kg, ${p.length}×${p.width}×${p.height} cm`).join("; ")}</td></tr>
+          <tr><td className="returbo-detail-info-label">Reference</td><td className="returbo-detail-info-val">{preview.reference}</td></tr>
+        </tbody>
+      </table>
+      {preview.warnings.length > 0 && (
+        <ul style={{ color: "#b45309", margin: "8px 0 0", paddingLeft: 18 }}>
+          {preview.warnings.map((w) => <li key={w}>{w}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The next step for an approval email that was not sent. "Retry" would be
+ * refused while a shipment may already exist, so offer the step that unblocks it.
+ */
+function ApprovalEmailFix({ labelStatus, shipmentId, busy }: { labelStatus?: string | null; shipmentId?: string | null; busy: boolean }) {
+  if (labelStatus === "needs_review" && shipmentId) {
+    return (
+      <Form method="post" style={{ marginLeft: "auto" }}>
+        <input type="hidden" name="_action" value="void_label" />
+        <button type="submit" className="returbo-btn-danger-outline">Void shipment first</button>
+      </Form>
+    );
+  }
+  if (labelStatus === "unknown" || labelStatus === "sending" || labelStatus === "needs_review") {
+    return (
+      <span style={{ marginLeft: "auto", fontSize: 12.5 }}>
+        Check ShippyPro, then use “No shipment was created” in the shipping section.
+      </span>
+    );
+  }
+  return (
+    <Form method="post" style={{ marginLeft: "auto" }}>
+      <input type="hidden" name="_action" value="retry_approval_email" />
+      <button type="submit" className="returbo-btn-primary" disabled={busy} aria-busy={busy}>
+        {busy ? "Retrying..." : "Retry label & email"}
+      </button>
+    </Form>
+  );
+}
+
 function getStatusBadgeClass(status: string) {
   const s = (status || "").toLowerCase().trim();
   if (s.includes("submitted") || s.includes("pending approval")) return "returbo-status-submitted";
@@ -384,7 +488,7 @@ function formatDateTime(value: string | Date) {
 }
 
 export default function ReturnDetailPage() {
-  const { rr, itemImages = {}, carrierName, warehouseAddress } = useLoaderData<typeof loader>();
+  const { rr, itemImages = {}, carrierName, warehouseAddress, testMode } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isApproving = navigation.state !== "idle" && navigation.formData?.get("_action") === "approve";
@@ -393,6 +497,12 @@ export default function ReturnDetailPage() {
   const [showRejectForm, setShowRejectForm] = useState(false);
 
   const allPhotos = rr.items?.flatMap((it: any) => it.photos || []) || [];
+  // A label attempt whose outcome is not known: a shipment may or may not exist.
+  const labelUnconfirmed = Boolean(rr.label && (
+    rr.label.status === "unknown"
+    || rr.label.status === "sending"
+    || (rr.label.status === "needs_review" && !rr.label.shippyproOrderId)
+  ));
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--returbo-bg, #f6f6f7)" }}>
@@ -408,6 +518,14 @@ export default function ReturnDetailPage() {
             </svg>
             <span>Back to returns</span>
           </Link>
+          {testMode && (
+            <span
+              className="returbo-badge returbo-badge-yellow"
+              title={testMode.liveLabels ? "Test store: real ShippyPro labels are ON" : "Test store: real ShippyPro labels are OFF"}
+            >
+              TEST STORE · live labels {testMode.liveLabels ? "ON" : "OFF"}
+            </span>
+          )}
           <div style={{ fontSize: 13, color: "#6b7280" }}>
             Return ID: <span style={{ fontFamily: "monospace", color: "#111827" }}>{rr.id}</span>
           </div>
@@ -434,14 +552,9 @@ export default function ReturnDetailPage() {
             </svg>
             <span>{actionData.message}</span>
             {actionData.ok === false
-              && (actionData.intent === "approve" || actionData.intent === "retry_approval_email")
+              && (actionData.intent === "approve" || actionData.intent === "retry_approval_email" || actionData.intent === "exchange_payment_link")
               && rr.customerEmail && (
-                <Form method="post" style={{ marginLeft: "auto" }}>
-                  <input type="hidden" name="_action" value="retry_approval_email" />
-                  <button type="submit" className="returbo-btn-primary" disabled={isRetryingApprovalEmail} aria-busy={isRetryingApprovalEmail}>
-                    {isRetryingApprovalEmail ? "Retrying..." : "Retry label & email"}
-                  </button>
-                </Form>
+                <ApprovalEmailFix labelStatus={rr.label?.status} shipmentId={rr.label?.shippyproOrderId} busy={isRetryingApprovalEmail} />
               )}
           </div>
         )}
@@ -461,12 +574,7 @@ export default function ReturnDetailPage() {
                   : "Return label has not been generated; the approval email has not been sent."}
             </span>
             {rr.customerEmail && (
-              <Form method="post" style={{ marginLeft: "auto" }}>
-                <input type="hidden" name="_action" value="retry_approval_email" />
-                <button type="submit" className="returbo-btn-primary" disabled={isRetryingApprovalEmail} aria-busy={isRetryingApprovalEmail}>
-                  {isRetryingApprovalEmail ? "Retrying..." : "Retry label & email"}
-                </button>
-              </Form>
+              <ApprovalEmailFix labelStatus={rr.label?.status} shipmentId={rr.label?.shippyproOrderId} busy={isRetryingApprovalEmail} />
             )}
           </div>
         )}
@@ -505,7 +613,13 @@ export default function ReturnDetailPage() {
           </div>
 
           <div className="returbo-detail-header-actions">
-            {rr.type !== "exchange" && rr.status !== "Approved" && (
+            {rr.type !== "exchange" && REVIEWABLE_STATUSES.includes(rr.status) && (
+              <Form method="post" style={{ display: "inline" }}>
+                <input type="hidden" name="_action" value="preview_shipment" />
+                <button type="submit" className="returbo-btn-pink-outline">Check shipment details</button>
+              </Form>
+            )}
+            {rr.type !== "exchange" && REVIEWABLE_STATUSES.includes(rr.status) && (
               <Form method="post" style={{ display: "inline" }}>
                 <input type="hidden" name="_action" value="approve" />
                 <button type="submit" className="returbo-btn-primary" disabled={isApproving} aria-busy={isApproving}>
@@ -523,7 +637,7 @@ export default function ReturnDetailPage() {
               </Form>
             )}
 
-            {rr.status !== "Rejected" && (
+            {REJECTABLE_STATUSES.includes(rr.status) && (
               <button
                 type="button"
                 className="returbo-btn-danger-outline"
@@ -538,6 +652,10 @@ export default function ReturnDetailPage() {
             )}
           </div>
         </div>
+
+        {actionData?.intent === "preview_shipment" && actionData.ok && "preview" in actionData && actionData.preview && (
+          <ShipmentPreviewPanel preview={actionData.preview} />
+        )}
 
         {/* Rejection Form Drawer / Box (Conditional) */}
         {showRejectForm && (
@@ -954,19 +1072,51 @@ export default function ReturnDetailPage() {
                         <span>Download shipping label</span>
                       </a>
                     )}
-                    <Form method="post" style={{ display: "inline" }}>
-                      <input type="hidden" name="_action" value="regenerate_label" />
-                      <button type="submit" className="returbo-btn-pink-outline" disabled={isGeneratingLabel}>
-                        {isGeneratingLabel ? "Generating label..." : "Regenerate label"}
-                      </button>
-                    </Form>
-                    <Form method="post" style={{ display: "inline" }}>
-                      <input type="hidden" name="_action" value="void_label" />
-                      <button type="submit" className="returbo-btn-danger-outline">
-                        Void label
-                      </button>
-                    </Form>
+                    {RETRYABLE_LABEL_STATUSES.includes(rr.label.status) && (
+                      <Form method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="_action" value="preview_shipment" />
+                        <button type="submit" className="returbo-btn-pink-outline">Check shipment details</button>
+                      </Form>
+                    )}
+                    {RETRYABLE_LABEL_STATUSES.includes(rr.label.status) && (
+                      <Form method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="_action" value="regenerate_label" />
+                        <button type="submit" className="returbo-btn-pink-outline" disabled={isGeneratingLabel}>
+                          {isGeneratingLabel ? "Generating label..." : "Generate label again"}
+                        </button>
+                      </Form>
+                    )}
+                    {labelUnconfirmed && (
+                      <Form
+                        method="post"
+                        style={{ display: "inline" }}
+                        onSubmit={(event) => {
+                          if (!window.confirm(`Only continue if ShippyPro has NO shipment for order ${rr.orderNumber || ""}. Otherwise a second, paid label will be created.`)) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        <input type="hidden" name="_action" value="confirm_no_shipment" />
+                        <button type="submit" className="returbo-btn-pink-outline">
+                          No shipment was created
+                        </button>
+                      </Form>
+                    )}
+                    {rr.label.shippyproOrderId && rr.label.status !== "voided" && (
+                      <Form method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="_action" value="void_label" />
+                        <button type="submit" className="returbo-btn-danger-outline">
+                          Void label
+                        </button>
+                      </Form>
+                    )}
                   </div>
+                  {labelUnconfirmed && (
+                    <p role="alert" style={{ fontSize: 13, color: "#b45309", marginTop: -8, marginBottom: 16 }}>
+                      The last label request has no confirmed result, so a shipment may already exist in ShippyPro.
+                      Check ShippyPro before creating another label.
+                    </p>
+                  )}
 
                   <h3 style={{ fontSize: 14, fontWeight: 600, color: "#111827", marginBottom: 12 }}>
                     Tracking Events
@@ -999,7 +1149,11 @@ export default function ReturnDetailPage() {
                   <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>
                     No return label has been generated yet for this request.
                   </p>
-                  <Form method="post">
+                  <Form method="post" style={{ display: "inline", marginRight: 10 }}>
+                    <input type="hidden" name="_action" value="preview_shipment" />
+                    <button type="submit" className="returbo-btn-pink-outline">Check shipment details</button>
+                  </Form>
+                  <Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="_action" value="regenerate_label" />
                     <button type="submit" className="returbo-btn-primary" disabled={isGeneratingLabel}>
                       {isGeneratingLabel ? "Generating label..." : "Generate shipping label"}

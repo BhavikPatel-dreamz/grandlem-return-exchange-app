@@ -163,7 +163,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 const EVENT_OPTIONS = [
-  "received", "approved", "rejected", "payment_required", "refund_issued",
+  "received", "approved", "exchange_approved", "rejected", "payment_required", "refund_issued",
   "item_received", "replacement_sent", "store_credit_issued", "withdrawal",
 ];
 
@@ -445,6 +445,14 @@ function getEventDisplayInfo(event: string) {
     case "approved":
       return {
         title: "Approved",
+        badgeText: "Incoming",
+        badgeIcon: "→",
+        badgeStyle: { backgroundColor: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
+        flow: "return",
+      };
+    case "exchange_approved":
+      return {
+        title: "Exchange approved",
         badgeText: "Incoming",
         badgeIcon: "→",
         badgeStyle: { backgroundColor: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
