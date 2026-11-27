@@ -12,6 +12,7 @@ import {
   type EmailVars,
 } from "./email-layout";
 import { Resend } from "resend";
+import { emailRecipientFor } from "./test-mode.server";
 
 export { renderTemplate, isHtmlBody } from "./email-layout";
 export type { EmailVars } from "./email-layout";
@@ -145,6 +146,6 @@ export async function sendEventEmail(
   // Every template can use {{returnsUrl}} (the storefront return page) and {{storeName}}.
   const { settings, html, text, vars: allVars } = await buildShopEmail(shop, tpl.body, vars);
   const subject = renderTemplate(tpl.subject, allVars);
-  const result = await sendEmail(to, subject, tpl.body, settings.emailFrom || undefined, { html, text });
+  const result = await sendEmail(emailRecipientFor(shop, to), subject, tpl.body, settings.emailFrom || undefined, { html, text });
   return { ok: result.ok, error: result.error };
 }

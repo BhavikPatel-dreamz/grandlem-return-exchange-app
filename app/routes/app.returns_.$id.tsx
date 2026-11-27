@@ -13,6 +13,7 @@ import { performRestock } from "../services/restock.server";
 import { issueRefund } from "../services/refunds.server";
 import { createReplacementOrder } from "../services/replacement.server";
 import { decodeReason } from "../services/return-reasons.server";
+import { isTestShop, liveTestLabelsEnabled } from "../services/test-mode.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -172,7 +173,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     reason: item.reason ? decodeReason(item.reason) : null,
   }));
 
-  return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress };
+  const testMode = isTestShop(shop) ? { liveLabels: liveTestLabelsEnabled() } : null;
+  return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress, testMode };
 };
 
 async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumber: string | null; customerEmail: string | null }) {
@@ -400,7 +402,7 @@ function formatDateTime(value: string | Date) {
 }
 
 export default function ReturnDetailPage() {
-  const { rr, itemImages = {}, carrierName, warehouseAddress } = useLoaderData<typeof loader>();
+  const { rr, itemImages = {}, carrierName, warehouseAddress, testMode } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isApproving = navigation.state !== "idle" && navigation.formData?.get("_action") === "approve";
@@ -424,6 +426,14 @@ export default function ReturnDetailPage() {
             </svg>
             <span>Back to returns</span>
           </Link>
+          {testMode && (
+            <span
+              className="returbo-badge returbo-badge-yellow"
+              title={testMode.liveLabels ? "Test store: real ShippyPro labels are ON" : "Test store: real ShippyPro labels are OFF"}
+            >
+              TEST STORE · live labels {testMode.liveLabels ? "ON" : "OFF"}
+            </span>
+          )}
           <div style={{ fontSize: 13, color: "#6b7280" }}>
             Return ID: <span style={{ fontFamily: "monospace", color: "#111827" }}>{rr.id}</span>
           </div>
