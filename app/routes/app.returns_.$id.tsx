@@ -439,8 +439,8 @@ function ShipmentPreviewPanel({ preview }: { preview: ShipmentPreview }) {
  * The next step for an approval email that was not sent. "Retry" would be
  * refused while a shipment may already exist, so offer the step that unblocks it.
  */
-function ApprovalEmailFix({ labelStatus, busy }: { labelStatus?: string | null; busy: boolean }) {
-  if (labelStatus === "needs_review") {
+function ApprovalEmailFix({ labelStatus, shipmentId, busy }: { labelStatus?: string | null; shipmentId?: string | null; busy: boolean }) {
+  if (labelStatus === "needs_review" && shipmentId) {
     return (
       <Form method="post" style={{ marginLeft: "auto" }}>
         <input type="hidden" name="_action" value="void_label" />
@@ -448,7 +448,7 @@ function ApprovalEmailFix({ labelStatus, busy }: { labelStatus?: string | null; 
       </Form>
     );
   }
-  if (labelStatus === "unknown" || labelStatus === "sending") {
+  if (labelStatus === "unknown" || labelStatus === "sending" || labelStatus === "needs_review") {
     return (
       <span style={{ marginLeft: "auto", fontSize: 12.5 }}>
         Check ShippyPro, then use “No shipment was created” in the shipping section.
@@ -497,6 +497,12 @@ export default function ReturnDetailPage() {
   const [showRejectForm, setShowRejectForm] = useState(false);
 
   const allPhotos = rr.items?.flatMap((it: any) => it.photos || []) || [];
+  // A label attempt whose outcome is not known: a shipment may or may not exist.
+  const labelUnconfirmed = Boolean(rr.label && (
+    rr.label.status === "unknown"
+    || rr.label.status === "sending"
+    || (rr.label.status === "needs_review" && !rr.label.shippyproOrderId)
+  ));
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--returbo-bg, #f6f6f7)" }}>
@@ -548,7 +554,7 @@ export default function ReturnDetailPage() {
             {actionData.ok === false
               && (actionData.intent === "approve" || actionData.intent === "retry_approval_email" || actionData.intent === "exchange_payment_link")
               && rr.customerEmail && (
-                <ApprovalEmailFix labelStatus={rr.label?.status} busy={isRetryingApprovalEmail} />
+                <ApprovalEmailFix labelStatus={rr.label?.status} shipmentId={rr.label?.shippyproOrderId} busy={isRetryingApprovalEmail} />
               )}
           </div>
         )}
@@ -568,7 +574,7 @@ export default function ReturnDetailPage() {
                   : "Return label has not been generated; the approval email has not been sent."}
             </span>
             {rr.customerEmail && (
-              <ApprovalEmailFix labelStatus={rr.label?.status} busy={isRetryingApprovalEmail} />
+              <ApprovalEmailFix labelStatus={rr.label?.status} shipmentId={rr.label?.shippyproOrderId} busy={isRetryingApprovalEmail} />
             )}
           </div>
         )}
@@ -1080,7 +1086,7 @@ export default function ReturnDetailPage() {
                         </button>
                       </Form>
                     )}
-                    {(rr.label.status === "unknown" || rr.label.status === "sending") && (
+                    {labelUnconfirmed && (
                       <Form
                         method="post"
                         style={{ display: "inline" }}
@@ -1105,7 +1111,7 @@ export default function ReturnDetailPage() {
                       </Form>
                     )}
                   </div>
-                  {(rr.label.status === "unknown" || rr.label.status === "sending") && (
+                  {labelUnconfirmed && (
                     <p role="alert" style={{ fontSize: 13, color: "#b45309", marginTop: -8, marginBottom: 16 }}>
                       The last label request has no confirmed result, so a shipment may already exist in ShippyPro.
                       Check ShippyPro before creating another label.
