@@ -395,6 +395,50 @@ describe("createReturnLabel", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pre-flight validation and preview
+// ---------------------------------------------------------------------------
+
+describe("shipment pre-flight", () => {
+  it("does not call Ship when the customer's postal code is missing", async () => {
+    state.order.shippingAddress.zip = "";
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Customer (pickup) postal code is missing");
+    expect(shipCalls()).toHaveLength(0);
+    expect(state.returnLabels[0].status).toBe("failed");
+  });
+
+  it("does not call Ship when there is no return warehouse address", async () => {
+    state.location = null;
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.error).toContain("Return warehouse street address is missing");
+    expect(shipCalls()).toHaveLength(0);
+  });
+
+  it("previews the shipment without calling Ship", async () => {
+    state.order.shippingAddress.phone = "";
+    const { previewReturnShipment } = await import("../app/services/shippypro.server");
+    const preview = await previewReturnShipment("rr_1");
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.from).toMatchObject({ name: "Test Buyer", zip: "10001" });
+    expect(preview.to).toMatchObject({ name: "US Warehouse", zip: "07102" });
+    expect(preview.warnings).toContain("Customer (pickup) phone is empty (some carriers require it)");
+    expect(shipCalls()).toHaveLength(0);
+    expect(state.returnLabels).toHaveLength(0);
+  });
+
+  it("admin preview action returns the shipment details", async () => {
+    const result = await adminAction("preview_shipment");
+    expect(result.ok).toBe(true);
+    expect(result.preview.reference).toBe("#1001");
+    expect(shipCalls()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Admin approval
 // ---------------------------------------------------------------------------
 
