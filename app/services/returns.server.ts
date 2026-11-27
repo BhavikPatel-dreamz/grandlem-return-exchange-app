@@ -24,11 +24,27 @@ export type CreateReturnRequestInput = {
   fulfillmentLocationId?: string | null;
 };
 
+/**
+ * Next free GLM-#### number for the shop. Counting rows alone can repeat a
+ * number after a deletion or when two requests arrive together, so the
+ * candidate is checked and bumped until unused.
+ * TODO: add a unique index on (shop, requestNumber) once the live data has
+ * been checked for existing duplicates.
+ */
+async function nextRequestNumber(shop: string): Promise<string> {
+  let n = 1001 + (await prisma.returnRequest.count({ where: { shop } }));
+  for (let i = 0; i < 50; i++, n++) {
+    const candidate = `GLM-${n}`;
+    const taken = await prisma.returnRequest.findFirst({ where: { shop, requestNumber: candidate }, select: { id: true } });
+    if (!taken) return candidate;
+  }
+  return `GLM-${n}-${Date.now().toString(36)}`;
+}
+
 export async function createReturnRequest(input: CreateReturnRequestInput) {
   if (input.items.length === 0) throw new Error("No items selected.");
 
-  const existingCount = await prisma.returnRequest.count({ where: { shop: input.shop } });
-  const requestNumber = `GLM-${1001 + existingCount}`;
+  const requestNumber = await nextRequestNumber(input.shop);
 
   const request = await prisma.returnRequest.create({
     data: {

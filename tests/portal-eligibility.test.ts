@@ -126,3 +126,42 @@ describe("quantity-aware eligibility", () => {
     expect(qty(result, LINE_A).quantity).toBe(5); // 10 bought, 2 removed, 3 not shipped
   });
 });
+
+describe("request numbers", () => {
+  it("skips a number that is already taken", async () => {
+    vi.resetModules();
+    vi.doMock("../app/db.server", () => ({
+      default: {
+        returnRequest: {
+          count: async () => 1,
+          findFirst: async ({ where }: any) => (where.requestNumber === "GLM-1002" ? { id: "x" } : null),
+          create: async ({ data }: any) => ({ id: "new", ...data, items: [] }),
+        },
+      },
+    }));
+    const { createReturnRequest } = await import("../app/services/returns.server");
+    const created = await createReturnRequest({
+      shop: SHOP,
+      shopifyOrderId: ORDER,
+      type: "return",
+      items: [{ shopifyLineItemId: LINE_A, quantity: 1 }],
+    });
+    expect(created.requestNumber).toBe("GLM-1003");
+    vi.doUnmock("../app/db.server");
+  });
+});
+
+describe("legacy /portal route", () => {
+  it("redirects a valid shop to the storefront return page", async () => {
+    const { loader } = await import("../app/routes/portal");
+    const response = await loader({ request: new Request("https://app.test/portal?shop=dev-test.myshopify.com") } as any);
+    expect(response.status).toBe(301);
+    expect(response.headers.get("Location")).toBe("https://dev-test.myshopify.com/apps/returns");
+  });
+
+  it("does not accept posted forms or arbitrary hosts", async () => {
+    const { loader, action } = await import("../app/routes/portal");
+    await expect(loader({ request: new Request("https://app.test/portal?shop=evil.example.com") } as any)).rejects.toMatchObject({ status: 404 });
+    await expect(action({ request: new Request("https://app.test/portal", { method: "POST" }) } as any)).rejects.toMatchObject({ status: 410 });
+  });
+});
