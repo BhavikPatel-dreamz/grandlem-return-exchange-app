@@ -426,17 +426,45 @@ describe("admin approval", () => {
     expect(state.emails.find((e) => e.event === "rejected")?.to).toBe("buyer@example.com");
   });
 
-  // Known defects (D5). Fixed in roadmap step A1.
-  it.fails("ignores a second approve of an already-approved request", async () => {
+  it("ignores a second approve of an already-approved request", async () => {
     await adminAction("approve");
-    state.returnLabels[0].status = "failed"; // second click after a failure must still not re-ship
-    await adminAction("approve");
+    state.returnLabels[0].status = "failed"; // even after a failed label, approve must not re-ship
+    const second = await adminAction("approve");
+    expect(second.ok).toBe(false);
+    expect(second.message).toContain("already approved");
     expect(shipCalls()).toHaveLength(1);
+    expect(state.emails.filter((e) => e.event === "approved")).toHaveLength(1);
   });
 
-  it.fails("refuses to approve a rejected request", async () => {
+  it("refuses to approve a rejected request", async () => {
     await adminAction("reject", { rejectionReason: "Worn item" });
-    await adminAction("approve");
+    const result = await adminAction("approve");
+    expect(result.ok).toBe(false);
     expect(state.returnRequests[0].status).toBe("Rejected");
+    expect(shipCalls()).toHaveLength(0);
+  });
+
+  it("refuses to reject an approved request", async () => {
+    await adminAction("approve");
+    const result = await adminAction("reject", { rejectionReason: "Changed mind" });
+    expect(result.ok).toBe(false);
+    expect(state.returnRequests[0].status).toBe("Approved");
+    expect(state.emails.some((e) => e.event === "rejected")).toBe(false);
+  });
+
+  it("double-click approve sends one label and one email", async () => {
+    await Promise.all([adminAction("approve"), adminAction("approve")]);
+    expect(shipCalls()).toHaveLength(1);
+    expect(state.emails.filter((e) => e.event === "approved")).toHaveLength(1);
+  });
+
+  it("retrying the approval email reuses the existing label", async () => {
+    state.emails.length = 0;
+    await adminAction("approve");
+    state.returnRequests[0].approvalEmailSentAt = null; // pretend the email failed
+    const retry = await adminAction("retry_approval_email");
+    expect(retry.ok).toBe(true);
+    expect(shipCalls()).toHaveLength(1);
+    expect(state.emails.filter((e) => e.event === "approved")).toHaveLength(2);
   });
 });
