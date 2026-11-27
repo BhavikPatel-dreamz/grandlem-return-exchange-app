@@ -15,6 +15,7 @@ import {
   updateReturnImageCommentConfig,
 } from "../services/settings.server";
 import prisma from "../db.server";
+import { toCountryCode } from "../services/country-code";
 import {
   listReturnReasons,
   createReturnReason,
@@ -163,6 +164,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             String(formData.get(`${field}_${market}`) || "").trim(),
           ]),
         );
+        // ShippyPro only accepts 2-letter country codes.
+        if (address.country) address.country = toCountryCode(address.country);
         if (Object.values(address).some(Boolean)) warehouses[market] = address;
         else delete warehouses[market];
       }
@@ -1451,7 +1454,7 @@ export function SettingsView() {
                             type="text"
                             name={`country_${market}`}
                             defaultValue={address.country || (market === "DEFAULT" ? "" : market)}
-                            placeholder="e.g. Sweden, SE, US"
+                            placeholder="2-letter code, e.g. SE, US, GB"
                             className="returbo-detail-input"
                             style={{ width: "100%", height: 38 }}
                           />
@@ -1465,7 +1468,7 @@ export function SettingsView() {
                             type="tel"
                             name={`phone_${market}`}
                             defaultValue={address.phone || ""}
-                            placeholder="e.g. +46 8 123 456"
+                            placeholder="Required by ShippyPro, e.g. +46 8 123 456"
                             className="returbo-detail-input"
                             style={{ width: "100%", height: 38 }}
                           />

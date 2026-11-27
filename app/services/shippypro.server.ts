@@ -6,6 +6,7 @@ import { decryptSecret, encryptSecret } from "./crypto.server";
 import { sendEmail } from "./email.server";
 import { emailRecipientFor, isTestShop, liveLabelBlockedReason } from "./test-mode.server";
 import { RETRYABLE_LABEL_STATUSES } from "./label-status";
+import { isCountryCode, toCountryCode } from "./country-code";
 
 const DEFAULT_SHIPPYPRO_URL = "https://api.shippypro.com/v1";
 const LEGACY_SHIPPYPRO_URL = "https://www.shippypro.com/api";
@@ -79,11 +80,13 @@ export async function shippyproCall(method: string, params: Record<string, unkno
       const json = await res.json();
       const resultOk = String(json?.Result ?? "").toUpperCase() === "OK";
       // Some ShippyPro errors carry only ErrorMessage, with no Result field.
-      const errorMessageOnly = !resultOk && typeof json?.ErrorMessage === "string" && json.ErrorMessage.trim() !== "";
-      if (json?.error || errorMessageOnly || (json?.Result && !resultOk)) {
+      const text = (v: unknown) => (typeof v === "string" ? v.trim() : Array.isArray(v) ? v.join(", ") : v ? JSON.stringify(v) : "");
+      // ShippyPro reports errors as Error / ValidationErrors / ErrorMessage, often without a Result field.
+      const errorParts = resultOk ? [] : [text(json?.Error), text(json?.ErrorMessage), text(json?.error), text(json?.ValidationErrors)].filter(Boolean);
+      if (errorParts.length > 0 || (json?.Result && !resultOk)) {
         return {
           ok: false,
-          error: String(json.ErrorMessage || json.error || json.Result),
+          error: errorParts.length > 0 ? [...new Set(errorParts)].join(" — ") : String(json.Result),
           data: json,
         };
       }
@@ -112,9 +115,13 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
     : carrierData && typeof carrierData === "object"
       ? "CarrierID" in carrierData || "id" in carrierData || "carrier_id" in carrierData
         ? [carrierData]
-        : Object.values(carrierData).flatMap((entries) =>
-            Array.isArray(entries) ? entries : entries && typeof entries === "object" ? [entries] : [],
-          )
+        // Carriers grouped by carrier type, e.g. { "UPS": [{ CarrierID, Label }] }:
+        // keep the type, Ship needs it as CarrierName (the Label is only a nickname).
+        : Object.entries(carrierData).flatMap(([type, entries]) => {
+            const list = Array.isArray(entries) ? entries : entries && typeof entries === "object" ? [entries] : [];
+            const typeName = /^\d+$/.test(type) ? undefined : type;
+            return list.map((entry: any) => ({ ...entry, CarrierName: entry.CarrierName ?? typeName }));
+          })
       : [];
   const syncedCarriers = [];
   for (const c of carriers) {
@@ -180,6 +187,18 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
     };
   }
   return { ok: true, data: syncedCarriers };
+}
+
+/**
+ * Carrier type ShippyPro expects as CarrierName (e.g. "UPS", "DHLExpress").
+ * Carrier.name holds the connection's Label (a nickname), so read the type
+ * from the synced data first.
+ */
+export function shippyproCarrierType(carrier: { name: string; meta: string | null } | null | undefined): string | null {
+  if (!carrier) return null;
+  const meta = parseJson<Record<string, unknown>>(carrier.meta, {});
+  const type = meta.CarrierName ?? meta.carrier_name ?? meta.Carrier;
+  return typeof type === "string" && type.trim() ? type.trim() : null;
 }
 
 export type Parcel = { weight: number; length: number; width: number; height: number };
@@ -255,7 +274,8 @@ export async function findOriginalShipment(
   if (!carrierId && carrierName) {
     const syncedCarriers = await prisma.carrier.findMany({ where: { shop } });
     carrierId = syncedCarriers.find(
-      (carrier) => carrier.name.trim().toLowerCase() === String(carrierName).trim().toLowerCase(),
+      (carrier) => [carrier.name, shippyproCarrierType(carrier)]
+        .some((n) => n?.trim().toLowerCase() === String(carrierName).trim().toLowerCase()),
     )?.shippyproCarrierId;
   }
   return {
@@ -271,6 +291,7 @@ export async function findOriginalShipment(
       city: fromAddress.City ?? fromAddress.city ?? shipment.warehouseCity ?? shipment.warehouse_city ?? "",
       zip: fromAddress.ZIP ?? fromAddress.Zip ?? fromAddress.zip ?? shipment.warehouseZip ?? shipment.warehouse_zip ?? "",
       country: fromAddress.Country ?? fromAddress.country ?? shipment.warehouseCountry ?? shipment.warehouse_country ?? shipment.warehouseCountryCode ?? "",
+      phone: fromAddress.Phone ?? fromAddress.phone ?? "",
     },
     // The original recipient becomes the sender of the return.
     customerAddress: readAddress(shipment.ToAddress ?? shipment.toAddress ?? shipment.to_address),
@@ -533,7 +554,10 @@ export function validateReturnShipment(params: Record<string, any>): { errors: s
     for (const [field, fieldLabel] of REQUIRED_ADDRESS_FIELDS) {
       if (!String(address[field] ?? "").trim()) errors.push(`${label} ${fieldLabel} is missing`);
     }
-    if (!String(address.phone ?? "").trim()) warnings.push(`${label} phone is empty (some carriers require it)`);
+    if (!String(address.phone ?? "").trim()) errors.push(`${label} phone is missing (ShippyPro requires it)`);
+    if (String(address.country ?? "").trim() && !isCountryCode(address.country)) {
+      errors.push(`${label} country "${address.country}" must be a 2-letter code such as SE, US or GB`);
+    }
   }
   if (!params.CarrierID) errors.push("Carrier is missing");
   const parcels = Array.isArray(params.parcels) ? params.parcels : [];
@@ -563,7 +587,7 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
       where: { shop_shippyproCarrierId: { shop: rr.shop, shippyproCarrierId: routing.carrierId } },
     });
     carrierRecordId = carrier?.id ?? null;
-    const carrierName = carrier?.name || original?.CarrierName || original?.carrierName;
+    const carrierName = shippyproCarrierType(carrier) || original?.CarrierName || original?.carrierName || carrier?.name;
     const carrierId = Number(routing.carrierId);
     if (!Number.isInteger(carrierId) || !carrierName) {
       throw new Error("Sync the selected ShippyPro carrier before generating a return label.");
@@ -576,6 +600,12 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
       warehouse = original.warehouseAddress;
       if (!warehouse.address1 || !warehouse.country) {
         throw new Error("Original shipment warehouse address unavailable; label not created to avoid routing to the wrong warehouse");
+      }
+      if (!warehouse.phone) {
+        // ShippyPro requires a phone: take it from the configured return address or the Shopify location.
+        const configuredPhone = [warehouseMap[marketKey], warehouseMap["DEFAULT"]].find((a) => a?.phone)?.phone;
+        const locationPhone = configuredPhone ? null : (await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId))?.phone;
+        warehouse = { ...warehouse, phone: configuredPhone || locationPhone || "" };
       }
     } else {
       // No original shipment: the return address configured in Settings wins,
@@ -605,7 +635,7 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
       parcels = fallback ? [fallback] : [{ weight: 1, length: 10, width: 10, height: 10 }];
     }
     const { values: itemValues, currencyCode } = await fetchOrderLineItemValues(rr.shop, rr.shopifyOrderId || "");
-    const isSweden = ["SE", "SWEDEN"].includes(String(warehouse.country || "").toUpperCase());
+    const isSweden = toCountryCode(warehouse.country) === "SE";
     const variantCustoms = isSweden
       ? await fetchVariantCustoms(rr.shop, [...new Set(rr.items.map((item) => item.variantId).filter(Boolean) as string[])])
       : new Map();
@@ -646,7 +676,7 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
         city: warehouse["city"] || "",
         state: warehouse["state"] || warehouse["province"] || "",
         zip: warehouse["zip"] || "",
-        country: warehouse["country"] || "",
+        country: toCountryCode(warehouse["country"]),
         phone: warehouse["phone"] || "",
         email: "",
       },
@@ -658,7 +688,7 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
         city: shippingAddress?.city || "",
         state: shippingAddress?.state || "",
         zip: shippingAddress?.zip || "",
-        country: shippingAddress?.country || "",
+        country: toCountryCode(shippingAddress?.country),
         phone: shippingAddress?.phone || "",
         email: rr.customerEmail || "",
       },
@@ -874,7 +904,7 @@ export async function voidReturnLabel(returnRequestId: string): Promise<{ ok: bo
 
     const result = await shippyproCall("VoidShipments", {
       OrderIDS: [shippyproOrderId],
-      CarrierName: carrier.name,
+      CarrierName: shippyproCarrierType(carrier) || carrier.name,
     }, rr.shop);
     if (!result.ok) return { ok: false, error: result.error || "ShippyPro could not void this label" };
 
