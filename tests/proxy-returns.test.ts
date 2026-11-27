@@ -69,6 +69,8 @@ vi.mock("../app/db.server", () => {
           (r) => r.shop === where.shop && (where.shopifyOrderId?.in ?? [where.shopifyOrderId]).includes(r.shopifyOrderId),
         ),
       count: async ({ where }: any) => state.returnRequests.filter((r) => r.shop === where.shop).length,
+      findFirst: async ({ where }: any) =>
+        state.returnRequests.find((r) => r.shop === where.shop && r.requestNumber === where.requestNumber) ?? null,
       create: async ({ data }: any) => {
         const row = {
           id: `rr_${state.returnRequests.length + 1}`,

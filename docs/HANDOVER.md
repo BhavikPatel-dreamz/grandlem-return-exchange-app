@@ -36,7 +36,7 @@ npm run deploy
 
 ## Key routes
 - Admin: `/app`, `/app/returns`, `/app/returns/:id`, `/app/settings`, `/app/email-templates`
-- Customer portal: `/portal?shop=...&lang=en|sv`
+- Customer return page: `https://{shop}/apps/returns` (app proxy). The old `/portal` route only redirects there.
 - Webhooks: `/webhooks/app/uninstalled`, `/webhooks/app/scopes_update`, `/webhooks/products/update`, `/webhooks/shippypro`
 
 ## Client configuration still required
