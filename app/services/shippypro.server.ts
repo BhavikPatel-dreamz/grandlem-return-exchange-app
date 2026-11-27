@@ -747,7 +747,11 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
   // 2. Send exactly one Ship call.
   const shipResult = await shippyproCall("Ship", params, rr.shop);
   if (!shipResult.ok) {
-    return finish(shipResult.uncertain ? "unknown" : "failed", shipResult.error || "Ship call failed");
+    const reason = shipResult.error || "Ship call failed";
+    return finish(
+      shipResult.uncertain ? "unknown" : "failed",
+      shipResult.uncertain ? `No usable reply from ShippyPro (${reason}); a shipment may exist.` : `ShippyPro refused the shipment: ${reason}`,
+    );
   }
 
   // 3. Save what ShippyPro returned. From here on a shipment exists.
@@ -781,7 +785,10 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
       console.error(`[ShippyPro] Ship returned no label URL for request ${rr.id}. Response fields: ${Object.keys(data ?? {}).join(", ")}`);
       await recordShipResponse(rr.id, data);
       await notifyLabelFailure(rr.shop, rr.orderNumber, "ShippyPro's reply contained no label URL");
-      return { ok: false, error: blockedLabelMessage(shippyproOrderId ? "needs_review" : "unknown", rr.orderNumber) };
+      return {
+        ok: false,
+        error: `ShippyPro replied without a label link${shippyproOrderId ? ` (shipment ${shippyproOrderId})` : " or shipment ID"}. ShippyPro's reply: ${summarizeReply(data)}`,
+      };
     }
     return { ok: true };
   } catch (e) {
@@ -800,6 +807,12 @@ export function firstLabelUrl(data: any): string | null {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
+}
+
+/** Short, readable version of a ShippyPro reply for admin error messages. */
+export function summarizeReply(data: any): string {
+  const text = JSON.stringify(data ?? null);
+  return text.length > 400 ? `${text.slice(0, 400)}…` : text;
 }
 
 async function recordShipResponse(returnRequestId: string, data: any) {
