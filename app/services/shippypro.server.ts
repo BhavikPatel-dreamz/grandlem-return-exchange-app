@@ -8,7 +8,10 @@ import { sendEmail } from "./email.server";
 const DEFAULT_SHIPPYPRO_URL = "https://api.shippypro.com/v1";
 const LEGACY_SHIPPYPRO_URL = "https://www.shippypro.com/api";
 
-export type ShippyProResult = { ok: boolean; data?: any; error?: string };
+// `uncertain` = the request may have reached ShippyPro but we have no usable
+// answer (network error, timeout, unreadable body). For `Ship` that means a
+// shipment may exist, so it must never be re-sent automatically.
+export type ShippyProResult = { ok: boolean; data?: any; error?: string; uncertain?: boolean };
 
 function retryAfterMs(value: string | null, attempt: number): number {
   if (value) {
@@ -82,7 +85,7 @@ export async function shippyproCall(method: string, params: Record<string, unkno
     }
     return { ok: false, error: "ShippyPro rate limit exceeded" };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Network error" };
+    return { ok: false, uncertain: true, error: e instanceof Error ? e.message : "Network error" };
   }
 }
 
@@ -397,214 +400,257 @@ function routingDecision(original: any, settings: any, market: string | null) {
   return { carrierId, service, flagged, reason };
 }
 
-export async function createReturnLabel(returnRequestId: string, maxAttempts = 3): Promise<{ ok: boolean; error?: string }> {
-  let lastError: string | undefined;
-  let attemptedRouting: { carrierId: string | null; service: string | null; flagged: boolean } | null = null;
-  let attemptedCarrierRecordId: string | null = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+// ---- Label lifecycle (one label per request) ------------------------------
+// ReturnLabel.status:
+//   sending       a Ship call is in progress (acts as the lock)
+//   created       label ready (tracking webhooks may later overwrite it with carrier statuses)
+//   failed        ShippyPro rejected the shipment, or it was never sent: safe to try again
+//   unknown       Ship was sent but the outcome is unknown: a shipment MAY exist
+//   needs_review  ShippyPro created a shipment but returned no label file
+//   voided        voided with ShippyPro: safe to try again
+// Only `failed`, `voided` and the legacy default `pending` allow a new Ship call.
+// Nothing here retries Ship automatically; every new attempt is an explicit action.
+export const RETRYABLE_LABEL_STATUSES = ["failed", "voided", "pending"];
+
+export type CreateLabelResult = { ok: boolean; error?: string };
+
+function blockedLabelMessage(status: string, orderNumber: string | null): string {
+  const ref = orderNumber ? ` (order ${orderNumber})` : "";
+  switch (status) {
+    case "sending":
+      return `A shipping label is already being created for this request${ref}.`;
+    case "unknown":
+      return `The last label request to ShippyPro${ref} has an unknown result, so a shipment may already exist. Check ShippyPro, then confirm "No shipment was created" before trying again.`;
+    case "needs_review":
+      return `ShippyPro created a shipment${ref} but returned no label file. Void it before creating a new label.`;
+    default:
+      return `A shipping label already exists for this request${ref}. Void it before creating a new one.`;
+  }
+}
+
+/** Takes the per-request label lock. Only one caller can win. */
+async function claimLabelSlot(returnRequestId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const existing = await prisma.returnLabel.findUnique({ where: { returnRequestId } });
+  if (!existing) {
     try {
-      const rr = await prisma.returnRequest.findUnique({
-        where: { id: returnRequestId },
-        include: { items: true, label: true },
-      });
-      if (!rr) throw new Error("Return request not found");
-
-      const settings = await getOrCreateSettings(rr.shop);
-      const original = await findOriginalShipment(
-        rr.shop,
-        rr.orderNumber,
-        rr.submittedAt,
-        Math.max(settings.returnDeadlineDays, settings.exchangeDeadlineDays) + 60,
-      );
-      const routing = routingDecision(original, settings, rr.market);
-      attemptedRouting = { carrierId: routing.carrierId, service: routing.service, flagged: routing.flagged };
-      if (!routing.carrierId) throw new Error("No carrier available for routing");
-
-      // Ensure carrier record exists in DB (best effort)
-      const carrier = await prisma.carrier.findUnique({
-        where: { shop_shippyproCarrierId: { shop: rr.shop, shippyproCarrierId: routing.carrierId } },
-      });
-      attemptedCarrierRecordId = carrier?.id ?? null;
-      const carrierName = carrier?.name || original?.CarrierName || original?.carrierName;
-      const carrierId = Number(routing.carrierId);
-      if (!Number.isInteger(carrierId) || !carrierName) {
-        throw new Error("Sync the selected ShippyPro carrier before generating a return label.");
-      }
-
-      const warehouseMap = parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {});
-      const marketKey = (rr.market || "DEFAULT").toUpperCase();
-      let warehouse: Record<string, string>;
-      if (original) {
-        warehouse = original.warehouseAddress;
-        if (!warehouse.address1 || !warehouse.country) {
-          throw new Error("Original shipment warehouse address unavailable; label not created to avoid routing to the wrong warehouse");
-        }
-      } else {
-        warehouse = await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId)
-          || warehouseMap[marketKey]
-          || warehouseMap["DEFAULT"]
-          || { country: "", city: "" };
-      }
-
-      const shippingAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
-      const { values: itemValues, currencyCode } = await fetchOrderLineItemValues(rr.shop, rr.shopifyOrderId || "");
-      const isSweden = ["SE", "SWEDEN"].includes(String(warehouse.country || "").toUpperCase());
-      const variantCustoms = isSweden
-        ? await fetchVariantCustoms(rr.shop, [...new Set(rr.items.map((item) => item.variantId).filter(Boolean) as string[])])
-        : new Map();
-
-      const customs = rr.items.map((it) => {
-        const unitValue = itemValues.get(it.shopifyLineItemId || "");
-        if (unitValue === undefined) throw new Error(`Original value unavailable for ${it.title || "returned item"}`);
-        const itemCustoms = it.variantId ? variantCustoms.get(it.variantId) : null;
-        const hsCode = itemCustoms?.harmonizedSystemCode?.trim() || "";
-        const originCountry = itemCustoms?.countryCodeOfOrigin?.trim() || "";
-        return {
-          Description: it.title || "Returned item",
-          Quantity: it.returnedQuantity || it.quantity,
-          Value: unitValue.toFixed(2),
-          OriginCountry: originCountry,
-          HSCode: hsCode,
-        };
-      });
-      if (isSweden && customs.some((item) => !item.HSCode || !item.OriginCountry)) {
-        if (attemptedRouting) attemptedRouting.flagged = true;
-        throw new Error("Sweden return customs requires an HS code and country of origin for every item");
-      }
-      if (isSweden && !currencyCode) {
-        throw new Error("Order currency is unavailable for the customs declaration.");
-      }
-
-      const params = {
-        CarrierID: carrierId,
-        CarrierName: carrierName,
-        CarrierService: routing.service || carrier?.service || undefined,
-        IsReturn: true,
-        TransactionID: rr.orderNumber || rr.shopifyOrderId,
-        Async: false,
-        ContentDescription: rr.items.map((item) => item.title || "Returned item").join(", "),
-        to_address: {
-          name: (warehouse["name"] as string) || "Warehouse",
-          company: warehouse["company"] || "",
-          street1: warehouse["address1"] || warehouse["address"] || "",
-          street2: warehouse["address2"] || "",
-          city: warehouse["city"] || "",
-          state: warehouse["state"] || warehouse["province"] || "",
-          zip: warehouse["zip"] || "",
-          country: warehouse["country"] || "",
-          phone: warehouse["phone"] || "",
-          email: "",
-        },
-        from_address: {
-          name: shippingAddress?.name || rr.customerName || "Customer",
-          company: "",
-          street1: shippingAddress?.address1 || "",
-          street2: shippingAddress?.address2 || "",
-          city: shippingAddress?.city || "",
-          state: shippingAddress?.state || "",
-          zip: shippingAddress?.zip || "",
-          country: shippingAddress?.country || "",
-          phone: shippingAddress?.phone || "",
-          email: rr.customerEmail || "",
-        },
-        parcels: [{ weight: 1, length: 10, width: 10, height: 10 }],
-        ...(isSweden ? {
-          CN22Info: customs.map((item) => ({
-            Description: item.Description,
-            Weight: 1,
-            Quantity: item.Quantity,
-            UnitValue: Number(item.Value),
-            OriginCountry: item.OriginCountry,
-            Currency: currencyCode,
-            HSCode: item.HSCode,
-          })),
-        } : {}),
-      };
-
-      const shipResult = await shippyproCall("Ship", params, rr.shop);
-      if (!shipResult.ok) throw new Error(shipResult.error || "Ship call failed");
-
-      const data = shipResult.data?.result || shipResult.data;
-      const shippyproOrderId = data?.NewOrderID ? String(data.NewOrderID) : null;
-      const rawLabelUrl = data?.PDF || data?.LabelURL || data?.label_url || data?.label;
-      const labelUrl = Array.isArray(rawLabelUrl) ? rawLabelUrl.find(Boolean) : rawLabelUrl;
-      const trackingNumber = data?.TrackingNumber || data?.tracking_number;
-      const trackingUrl = data?.TrackingExternalLink || data?.TrackingURL || data?.tracking_url;
-
-      if (!labelUrl) {
-        lastError = "ShippyPro accepted the shipment but did not return a label URL";
-        break;
-      }
-
-      await prisma.returnLabel.upsert({
-        where: { returnRequestId: rr.id },
-        create: {
-          returnRequestId: rr.id,
-          carrierId: carrier?.id ?? null,
-          connectionId: routing.carrierId,
-          shippyproOrderId,
-          service: routing.service ?? null,
-          labelUrl: labelUrl ?? null,
-          trackingNumber: trackingNumber ?? null,
-          trackingUrl: trackingUrl ?? null,
-          status: "created",
-          customsData: JSON.stringify(customs),
-        },
-        update: {
-          carrierId: carrier?.id ?? null,
-          connectionId: routing.carrierId,
-          shippyproOrderId,
-          service: routing.service ?? null,
-          labelUrl: labelUrl ?? null,
-          trackingNumber: trackingNumber ?? null,
-          trackingUrl: trackingUrl ?? null,
-          status: "created",
-          customsData: JSON.stringify(customs),
-        },
-      });
-
-      if (routing.flagged) {
-        await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } });
-      }
-
+      await prisma.returnLabel.create({ data: { returnRequestId, status: "sending" } });
       return { ok: true };
-    } catch (e) {
-      lastError = e instanceof Error ? e.message : "Unknown error";
-      if (attempt < maxAttempts) {
-        const delay = Math.pow(2, attempt) * 500;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+    } catch {
+      // Another request created the row first.
+      return { ok: false, error: blockedLabelMessage("sending", null) };
     }
+  }
+  const claimed = await prisma.returnLabel.updateMany({
+    where: { id: existing.id, status: { in: RETRYABLE_LABEL_STATUSES } },
+    data: { status: "sending", shippyproOrderId: null, labelUrl: null, trackingNumber: null, trackingUrl: null },
+  });
+  if (claimed.count === 1) return { ok: true };
+  const current = await prisma.returnLabel.findUnique({ where: { returnRequestId } });
+  return { ok: false, error: blockedLabelMessage(current?.status ?? existing.status, null) };
+}
+
+export async function createReturnLabel(returnRequestId: string): Promise<CreateLabelResult> {
+  const rr = await prisma.returnRequest.findUnique({
+    where: { id: returnRequestId },
+    include: { items: true, label: true },
+  });
+  if (!rr) return { ok: false, error: "Return request not found" };
+
+  const claim = await claimLabelSlot(rr.id);
+  if (!claim.ok) {
+    const current = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
+    return { ok: false, error: current ? blockedLabelMessage(current.status, rr.orderNumber) : claim.error };
   }
 
-  console.error(`[ShippyPro] Label generation failed for request ${returnRequestId}: ${lastError}`);
-  let failedOrderNumber: string | null = null;
-  let failedShop = "";
-  try {
-    const rr = await prisma.returnRequest.findUnique({ where: { id: returnRequestId } });
-    if (rr) {
-      failedShop = rr.shop;
-      failedOrderNumber = rr.orderNumber;
-      if (attemptedRouting?.flagged) {
-        await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } });
-      }
-      const failedRouting = {
-        carrierId: attemptedCarrierRecordId,
-        connectionId: attemptedRouting?.carrierId ?? null,
-        service: attemptedRouting?.service ?? null,
-        status: "failed",
-      };
-      await prisma.returnLabel.upsert({
-        where: { returnRequestId },
-        create: { returnRequestId, ...failedRouting },
-        update: failedRouting,
-      });
+  let routing: { carrierId: string | null; service: string | null; flagged: boolean } | null = null;
+  let carrierRecordId: string | null = null;
+  const finish = async (status: string, error: string): Promise<CreateLabelResult> => {
+    console.error(`[ShippyPro] Label ${status} for request ${rr.id}: ${error}`);
+    await prisma.returnLabel.update({
+      where: { returnRequestId: rr.id },
+      data: {
+        status,
+        carrierId: carrierRecordId,
+        connectionId: routing?.carrierId ?? null,
+        service: routing?.service ?? null,
+      },
+    }).catch(() => null);
+    if (routing?.flagged) {
+      await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } }).catch(() => null);
     }
-  } catch {
-    // ignore
+    await notifyLabelFailure(rr.shop, rr.orderNumber, error);
+    return { ok: false, error };
+  };
+
+  // 1. Build the shipment. Any error here happens before ShippyPro is called.
+  let params: Record<string, unknown>;
+  let customs: unknown[];
+  try {
+    const settings = await getOrCreateSettings(rr.shop);
+    const original = await findOriginalShipment(
+      rr.shop,
+      rr.orderNumber,
+      rr.submittedAt,
+      Math.max(settings.returnDeadlineDays, settings.exchangeDeadlineDays) + 60,
+    );
+    routing = routingDecision(original, settings, rr.market);
+    if (!routing.carrierId) throw new Error("No carrier available for routing");
+
+    const carrier = await prisma.carrier.findUnique({
+      where: { shop_shippyproCarrierId: { shop: rr.shop, shippyproCarrierId: routing.carrierId } },
+    });
+    carrierRecordId = carrier?.id ?? null;
+    const carrierName = carrier?.name || original?.CarrierName || original?.carrierName;
+    const carrierId = Number(routing.carrierId);
+    if (!Number.isInteger(carrierId) || !carrierName) {
+      throw new Error("Sync the selected ShippyPro carrier before generating a return label.");
+    }
+
+    const warehouseMap = parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {});
+    const marketKey = (rr.market || "DEFAULT").toUpperCase();
+    let warehouse: Record<string, string>;
+    if (original) {
+      warehouse = original.warehouseAddress;
+      if (!warehouse.address1 || !warehouse.country) {
+        throw new Error("Original shipment warehouse address unavailable; label not created to avoid routing to the wrong warehouse");
+      }
+    } else {
+      warehouse = await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId)
+        || warehouseMap[marketKey]
+        || warehouseMap["DEFAULT"]
+        || { country: "", city: "" };
+    }
+
+    const shippingAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
+    const { values: itemValues, currencyCode } = await fetchOrderLineItemValues(rr.shop, rr.shopifyOrderId || "");
+    const isSweden = ["SE", "SWEDEN"].includes(String(warehouse.country || "").toUpperCase());
+    const variantCustoms = isSweden
+      ? await fetchVariantCustoms(rr.shop, [...new Set(rr.items.map((item) => item.variantId).filter(Boolean) as string[])])
+      : new Map();
+
+    const customsItems = rr.items.map((it) => {
+      const unitValue = itemValues.get(it.shopifyLineItemId || "");
+      if (unitValue === undefined) throw new Error(`Original value unavailable for ${it.title || "returned item"}`);
+      const itemCustoms = it.variantId ? variantCustoms.get(it.variantId) : null;
+      return {
+        Description: it.title || "Returned item",
+        Quantity: it.returnedQuantity || it.quantity,
+        Value: unitValue.toFixed(2),
+        OriginCountry: itemCustoms?.countryCodeOfOrigin?.trim() || "",
+        HSCode: itemCustoms?.harmonizedSystemCode?.trim() || "",
+      };
+    });
+    if (isSweden && customsItems.some((item) => !item.HSCode || !item.OriginCountry)) {
+      routing.flagged = true;
+      throw new Error("Sweden return customs requires an HS code and country of origin for every item");
+    }
+    if (isSweden && !currencyCode) {
+      throw new Error("Order currency is unavailable for the customs declaration.");
+    }
+    customs = customsItems;
+
+    params = {
+      CarrierID: carrierId,
+      CarrierName: carrierName,
+      CarrierService: routing.service || carrier?.service || undefined,
+      IsReturn: true,
+      TransactionID: rr.orderNumber || rr.shopifyOrderId,
+      Async: false,
+      ContentDescription: rr.items.map((item) => item.title || "Returned item").join(", "),
+      to_address: {
+        name: (warehouse["name"] as string) || "Warehouse",
+        company: warehouse["company"] || "",
+        street1: warehouse["address1"] || warehouse["address"] || "",
+        street2: warehouse["address2"] || "",
+        city: warehouse["city"] || "",
+        state: warehouse["state"] || warehouse["province"] || "",
+        zip: warehouse["zip"] || "",
+        country: warehouse["country"] || "",
+        phone: warehouse["phone"] || "",
+        email: "",
+      },
+      from_address: {
+        name: shippingAddress?.name || rr.customerName || "Customer",
+        company: "",
+        street1: shippingAddress?.address1 || "",
+        street2: shippingAddress?.address2 || "",
+        city: shippingAddress?.city || "",
+        state: shippingAddress?.state || "",
+        zip: shippingAddress?.zip || "",
+        country: shippingAddress?.country || "",
+        phone: shippingAddress?.phone || "",
+        email: rr.customerEmail || "",
+      },
+      parcels: [{ weight: 1, length: 10, width: 10, height: 10 }],
+      ...(isSweden ? {
+        CN22Info: customsItems.map((item) => ({
+          Description: item.Description,
+          Weight: 1,
+          Quantity: item.Quantity,
+          UnitValue: Number(item.Value),
+          OriginCountry: item.OriginCountry,
+          Currency: currencyCode,
+          HSCode: item.HSCode,
+        })),
+      } : {}),
+    };
+  } catch (e) {
+    return finish("failed", e instanceof Error ? e.message : "Unknown error");
   }
-  if (failedShop) await notifyLabelFailure(failedShop, failedOrderNumber, lastError || "Unknown error");
-  return { ok: false, error: lastError };
+
+  // 2. Send exactly one Ship call.
+  const shipResult = await shippyproCall("Ship", params, rr.shop);
+  if (!shipResult.ok) {
+    return finish(shipResult.uncertain ? "unknown" : "failed", shipResult.error || "Ship call failed");
+  }
+
+  // 3. Save what ShippyPro returned. From here on a shipment exists.
+  try {
+    const data = shipResult.data?.result || shipResult.data;
+    const shippyproOrderId = data?.NewOrderID ? String(data.NewOrderID) : null;
+    const rawLabelUrl = data?.PDF || data?.LabelURL || data?.label_url || data?.label;
+    const labelUrl = Array.isArray(rawLabelUrl) ? rawLabelUrl.find(Boolean) : rawLabelUrl;
+    const trackingNumber = data?.TrackingNumber || data?.tracking_number;
+    const trackingUrl = data?.TrackingExternalLink || data?.TrackingURL || data?.tracking_url;
+
+    await prisma.returnLabel.update({
+      where: { returnRequestId: rr.id },
+      data: {
+        carrierId: carrierRecordId,
+        connectionId: routing!.carrierId,
+        shippyproOrderId,
+        service: routing!.service ?? null,
+        labelUrl: labelUrl ?? null,
+        trackingNumber: trackingNumber ?? null,
+        trackingUrl: trackingUrl ?? null,
+        status: labelUrl ? "created" : "needs_review",
+        customsData: JSON.stringify(customs),
+      },
+    });
+    if (routing!.flagged) {
+      await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } });
+    }
+    if (!labelUrl) {
+      await notifyLabelFailure(rr.shop, rr.orderNumber, "ShippyPro accepted the shipment but did not return a label URL");
+      return { ok: false, error: blockedLabelMessage("needs_review", rr.orderNumber) };
+    }
+    return { ok: true };
+  } catch (e) {
+    // The shipment exists but we could not record it.
+    return finish("unknown", `Shipment created but not saved: ${e instanceof Error ? e.message : "Unknown error"}`);
+  }
+}
+
+/**
+ * Admin confirms (after checking ShippyPro) that an `unknown` or stuck
+ * `sending` attempt did not create a shipment, which unlocks a new attempt.
+ */
+export async function confirmNoShipment(returnRequestId: string): Promise<{ ok: boolean; error?: string }> {
+  const result = await prisma.returnLabel.updateMany({
+    where: { returnRequestId, status: { in: ["unknown", "sending"] } },
+    data: { status: "failed" },
+  });
+  return result.count === 1 ? { ok: true } : { ok: false, error: "There is no unconfirmed label attempt for this request." };
 }
 
 export async function voidReturnLabel(returnRequestId: string): Promise<{ ok: boolean; error?: string }> {

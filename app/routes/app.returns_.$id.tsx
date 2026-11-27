@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
-import { createReturnLabel, fetchWarehouseAddress, voidReturnLabel } from "../services/shippypro.server";
+import { RETRYABLE_LABEL_STATUSES, confirmNoShipment, createReturnLabel, fetchWarehouseAddress, voidReturnLabel } from "../services/shippypro.server";
 import { applyReplacementVariants, createExchangePaymentLink } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
 import { performRestock } from "../services/restock.server";
@@ -268,6 +268,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         return { ok: false, intent: "regenerate_label", message };
       }
       return { ok: true, intent: "regenerate_label", message: "Shipping label generated" };
+    }
+    if (intent === "confirm_no_shipment") {
+      const result = await confirmNoShipment(actualId);
+      if (!result.ok) return { ok: false, intent, message: result.error || "Nothing to confirm" };
+      return { ok: true, intent, message: "Marked as not created. You can now generate the label again." };
     }
     if (intent === "void_label") {
       const result = await voidReturnLabel(actualId);
@@ -954,19 +959,45 @@ export default function ReturnDetailPage() {
                         <span>Download shipping label</span>
                       </a>
                     )}
-                    <Form method="post" style={{ display: "inline" }}>
-                      <input type="hidden" name="_action" value="regenerate_label" />
-                      <button type="submit" className="returbo-btn-pink-outline" disabled={isGeneratingLabel}>
-                        {isGeneratingLabel ? "Generating label..." : "Regenerate label"}
-                      </button>
-                    </Form>
-                    <Form method="post" style={{ display: "inline" }}>
-                      <input type="hidden" name="_action" value="void_label" />
-                      <button type="submit" className="returbo-btn-danger-outline">
-                        Void label
-                      </button>
-                    </Form>
+                    {RETRYABLE_LABEL_STATUSES.includes(rr.label.status) && (
+                      <Form method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="_action" value="regenerate_label" />
+                        <button type="submit" className="returbo-btn-pink-outline" disabled={isGeneratingLabel}>
+                          {isGeneratingLabel ? "Generating label..." : "Generate label again"}
+                        </button>
+                      </Form>
+                    )}
+                    {(rr.label.status === "unknown" || rr.label.status === "sending") && (
+                      <Form
+                        method="post"
+                        style={{ display: "inline" }}
+                        onSubmit={(event) => {
+                          if (!window.confirm(`Only continue if ShippyPro has NO shipment for order ${rr.orderNumber || ""}. Otherwise a second, paid label will be created.`)) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        <input type="hidden" name="_action" value="confirm_no_shipment" />
+                        <button type="submit" className="returbo-btn-pink-outline">
+                          No shipment was created
+                        </button>
+                      </Form>
+                    )}
+                    {rr.label.shippyproOrderId && rr.label.status !== "voided" && (
+                      <Form method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="_action" value="void_label" />
+                        <button type="submit" className="returbo-btn-danger-outline">
+                          Void label
+                        </button>
+                      </Form>
+                    )}
                   </div>
+                  {(rr.label.status === "unknown" || rr.label.status === "sending") && (
+                    <p role="alert" style={{ fontSize: 13, color: "#b45309", marginTop: -8, marginBottom: 16 }}>
+                      The last label request has no confirmed result, so a shipment may already exist in ShippyPro.
+                      Check ShippyPro before creating another label.
+                    </p>
+                  )}
 
                   <h3 style={{ fontSize: 14, fontWeight: 600, color: "#111827", marginBottom: 12 }}>
                     Tracking Events
