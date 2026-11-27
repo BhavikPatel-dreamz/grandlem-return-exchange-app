@@ -97,6 +97,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       orderBy: { name: "asc" },
       select: { id: true, shippyproCarrierId: true, name: true, service: true, syncedAt: true },
     }),
+    courierServices: await prisma.courierService.findMany({
+      where: { shop },
+      orderBy: { service: "asc" },
+      select: { shippyproCarrierId: true, service: true },
+    }),
     returnImageCommentConfig: getReturnImageCommentConfig(settings),
   };
 };
@@ -1292,41 +1297,14 @@ export function SettingsView() {
                         </p>
                       </div>
 
-                      <div>
-                        <label htmlFor={`carrierId_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                          ShippyPro carrier ID
-                        </label>
-                        <input
-                          id={`carrierId_${market}`}
-                          type="text"
-                          name={`carrierId_${market}`}
-                          defaultValue={method.carrierId || ""}
-                          placeholder="e.g. 101, DHL, UPS"
-                          className="returbo-detail-input"
-                          style={{ width: "100%", height: 38 }}
-                        />
-                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                          Carrier ID from your ShippyPro connected carriers.
-                        </p>
-                      </div>
-
-                      <div>
-                        <label htmlFor={`service_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                          Carrier service
-                        </label>
-                        <input
-                          id={`service_${market}`}
-                          type="text"
-                          name={`service_${market}`}
-                          defaultValue={method.service || ""}
-                          placeholder="e.g. Standard, Express, Return"
-                          className="returbo-detail-input"
-                          style={{ width: "100%", height: 38 }}
-                        />
-                        <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                          Rate or service code (e.g. Express, Ground).
-                        </p>
-                      </div>
+                      <CarrierServicePicker
+                        key={`${market}-${method.carrierId || ""}-${method.service || ""}`}
+                        market={market}
+                        carriers={data.carriers}
+                        courierServices={data.courierServices}
+                        defaultCarrierId={method.carrierId || ""}
+                        defaultService={method.service || ""}
+                      />
                     </div>
                   </div>
 
@@ -1548,6 +1526,93 @@ export function SettingsView() {
         </div>
       </div>
     </SettingsLayout>
+  );
+}
+
+const PICKER_LABEL_STYLE = { display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 } as const;
+const PICKER_HINT_STYLE = { margin: "4px 0 0", fontSize: 11.5, color: "#64748b" } as const;
+
+/** Carrier + service dropdowns filled from the carriers synced from ShippyPro. */
+function CarrierServicePicker({
+  market,
+  carriers,
+  courierServices,
+  defaultCarrierId,
+  defaultService,
+}: {
+  market: string;
+  carriers: { shippyproCarrierId: string; name: string; service: string | null }[];
+  courierServices: { shippyproCarrierId: string; service: string | null }[];
+  defaultCarrierId: string;
+  defaultService: string;
+}) {
+  const [carrierId, setCarrierId] = useState(defaultCarrierId);
+  const [service, setService] = useState(defaultService);
+
+  const services = Array.from(new Set([
+    ...courierServices.filter((s) => s.shippyproCarrierId === carrierId).map((s) => s.service),
+    carriers.find((c) => c.shippyproCarrierId === carrierId)?.service,
+  ].filter((s): s is string => Boolean(s))));
+  // Keep a previously saved value visible even if it is no longer synced.
+  const unknownCarrier = carrierId && !carriers.some((c) => c.shippyproCarrierId === carrierId);
+  const unknownService = service && !services.includes(service);
+  const isMarketRule = market !== "DEFAULT";
+
+  return (
+    <>
+      <div>
+        <label htmlFor={`carrierId_${market}`} style={PICKER_LABEL_STYLE}>
+          Return carrier
+        </label>
+        <select
+          id={`carrierId_${market}`}
+          name={`carrierId_${market}`}
+          value={carrierId}
+          onChange={(e) => {
+            setCarrierId(e.target.value);
+            setService("");
+          }}
+          className="returbo-detail-input"
+          style={{ width: "100%", height: 38 }}
+          disabled={carriers.length === 0 && !carrierId}
+        >
+          <option value="">{isMarketRule ? "Use the Default rule's carrier" : "Select a carrier"}</option>
+          {carriers.map((c) => (
+            <option key={c.shippyproCarrierId} value={c.shippyproCarrierId}>
+              {c.name} (ID {c.shippyproCarrierId})
+            </option>
+          ))}
+          {unknownCarrier && <option value={carrierId}>ID {carrierId} (not in synced carriers)</option>}
+        </select>
+        <p style={PICKER_HINT_STYLE}>
+          {carriers.length === 0
+            ? "No carriers synced yet. Use “Re-sync carriers” in the ShippyPro carriers section above."
+            : "Used when the original shipment cannot be found in ShippyPro."}
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor={`service_${market}`} style={PICKER_LABEL_STYLE}>
+          Carrier service
+        </label>
+        <select
+          id={`service_${market}`}
+          name={`service_${market}`}
+          value={service}
+          onChange={(e) => setService(e.target.value)}
+          className="returbo-detail-input"
+          style={{ width: "100%", height: 38 }}
+          disabled={!carrierId}
+        >
+          <option value="">{services.length > 0 ? "Carrier's default service" : "No services synced for this carrier"}</option>
+          {services.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+          {unknownService && <option value={service}>{service} (not synced)</option>}
+        </select>
+        <p style={PICKER_HINT_STYLE}>Services come from the carrier&apos;s ShippyPro connection.</p>
+      </div>
+    </>
   );
 }
 
