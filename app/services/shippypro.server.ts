@@ -178,6 +178,41 @@ export async function syncCarriers(shop: string): Promise<ShippyProResult> {
   return { ok: true, data: syncedCarriers };
 }
 
+export type Parcel = { weight: number; length: number; width: number; height: number };
+
+// ShippyPro's report field names are not confirmed against the official docs
+// (the API reference is JS-rendered). Several spellings are accepted; anything
+// unreadable falls back to Settings and flags the request for review.
+function readParcels(shipment: any): Parcel[] {
+  const raw = shipment.Parcels ?? shipment.parcels ?? shipment.ParcelList ?? null;
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  const num = (v: unknown) => Number(String(v ?? "").replace(",", "."));
+  const parcels = list.map((p: any) => ({
+    weight: num(p.weight ?? p.Weight),
+    length: num(p.length ?? p.Length),
+    width: num(p.width ?? p.Width),
+    height: num(p.height ?? p.Height),
+  }));
+  return parcels.length > 0 && parcels.every((p) => Object.values(p).every((v) => Number.isFinite(v) && v > 0)) ? parcels : [];
+}
+
+function readAddress(address: any): Record<string, string> {
+  if (!address || typeof address !== "object") return {};
+  const pick = (...keys: string[]) => String(keys.map((k) => address[k]).find((v) => v !== undefined && v !== null && v !== "") ?? "");
+  return {
+    name: pick("Name", "name"),
+    company: pick("Company", "company"),
+    address1: pick("Address1", "address1", "street1", "Street1"),
+    address2: pick("Address2", "address2", "street2", "Street2"),
+    city: pick("City", "city"),
+    state: pick("State", "state", "Province", "province"),
+    zip: pick("ZIP", "Zip", "zip"),
+    country: pick("Country", "country"),
+    phone: pick("Phone", "phone"),
+    email: pick("Email", "email"),
+  };
+}
+
 export async function findOriginalShipment(
   shop: string,
   orderNumber: string | null,
@@ -233,6 +268,9 @@ export async function findOriginalShipment(
       zip: fromAddress.ZIP ?? fromAddress.Zip ?? fromAddress.zip ?? shipment.warehouseZip ?? shipment.warehouse_zip ?? "",
       country: fromAddress.Country ?? fromAddress.country ?? shipment.warehouseCountry ?? shipment.warehouse_country ?? shipment.warehouseCountryCode ?? "",
     },
+    // The original recipient becomes the sender of the return.
+    customerAddress: readAddress(shipment.ToAddress ?? shipment.toAddress ?? shipment.to_address),
+    parcels: readParcels(shipment),
     warehouseCountry: shipment.warehouseCountry || shipment.warehouse_country || shipment.warehouseCountryCode || null,
     warehouseCity: shipment.warehouseCity || shipment.warehouse_city || null,
   };
@@ -542,13 +580,32 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
         throw new Error("Original shipment warehouse address unavailable; label not created to avoid routing to the wrong warehouse");
       }
     } else {
-      warehouse = await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId)
-        || warehouseMap[marketKey]
-        || warehouseMap["DEFAULT"]
+      // No original shipment: the return address configured in Settings wins,
+      // the Shopify fulfillment location is only a last resort.
+      const configured = [warehouseMap[marketKey], warehouseMap["DEFAULT"]].find((a) => a?.address1);
+      warehouse = configured
+        || await fetchWarehouseAddress(rr.shop, rr.fulfillmentLocationId)
         || { country: "", city: "" };
     }
 
-    const shippingAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
+    const orderAddress = await fetchOrderShippingAddress(rr.shop, rr.shopifyOrderId || "");
+    // Sender = the original shipment's recipient, gaps filled from the Shopify order.
+    const originalRecipient: Record<string, string> = original?.customerAddress ?? {};
+    const useOriginalRecipient = Boolean(originalRecipient.address1 && originalRecipient.zip && originalRecipient.country);
+    const shippingAddress: Record<string, string> | null = useOriginalRecipient
+      ? Object.fromEntries(
+          ["name", "address1", "address2", "city", "state", "zip", "country", "phone"].map((k) => [k, originalRecipient[k] || orderAddress?.[k] || ""]),
+        )
+      : orderAddress;
+
+    // Parcel = the original shipment's parcels; else the market's fallback parcel.
+    const methods = parseJson<Record<string, { parcel?: Parcel }>>(settings.defaultReturnMethodPerMarket, {});
+    let parcels: Parcel[] = original?.parcels ?? [];
+    if (parcels.length === 0) {
+      routing.flagged = true;
+      const fallback = methods[marketKey]?.parcel || methods["DEFAULT"]?.parcel;
+      parcels = fallback ? [fallback] : [{ weight: 1, length: 10, width: 10, height: 10 }];
+    }
     const { values: itemValues, currencyCode } = await fetchOrderLineItemValues(rr.shop, rr.shopifyOrderId || "");
     const isSweden = ["SE", "SWEDEN"].includes(String(warehouse.country || "").toUpperCase());
     const variantCustoms = isSweden
@@ -607,7 +664,7 @@ export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<Re
         phone: shippingAddress?.phone || "",
         email: rr.customerEmail || "",
       },
-      parcels: [{ weight: 1, length: 10, width: 10, height: 10 }],
+      parcels,
       ...(isSweden ? {
         CN22Info: customsItems.map((item) => ({
           Description: item.Description,
