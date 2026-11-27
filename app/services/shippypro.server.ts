@@ -751,8 +751,7 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
   try {
     const data = shipResult.data?.result || shipResult.data;
     const shippyproOrderId = data?.NewOrderID ? String(data.NewOrderID) : null;
-    const rawLabelUrl = data?.PDF || data?.LabelURL || data?.label_url || data?.label;
-    const labelUrl = Array.isArray(rawLabelUrl) ? rawLabelUrl.find(Boolean) : rawLabelUrl;
+    const labelUrl = firstLabelUrl(data);
     const trackingNumber = data?.TrackingNumber || data?.tracking_number;
     const trackingUrl = data?.TrackingExternalLink || data?.TrackingURL || data?.tracking_url;
 
@@ -774,6 +773,9 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
       await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } });
     }
     if (!labelUrl) {
+      // Keep ShippyPro's reply so the missing label can be diagnosed (shown under Tracking Events).
+      console.error(`[ShippyPro] Ship returned no label URL for request ${rr.id}. Response fields: ${Object.keys(data ?? {}).join(", ")}`);
+      await recordShipResponse(rr.id, data);
       await notifyLabelFailure(rr.shop, rr.orderNumber, "ShippyPro accepted the shipment but did not return a label URL");
       return { ok: false, error: blockedLabelMessage("needs_review", rr.orderNumber) };
     }
@@ -781,6 +783,35 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
   } catch (e) {
     // The shipment exists but we could not record it.
     return finish("unknown", `Shipment created but not saved: ${e instanceof Error ? e.message : "Unknown error"}`);
+  }
+}
+
+/**
+ * Label link from a Ship response. Every candidate field is checked: ShippyPro
+ * can send `PDF` as an empty list while the link is in `LabelURL`.
+ */
+export function firstLabelUrl(data: any): string | null {
+  const candidates = [data?.PDF, data?.LabelURL, data?.LabelUrl, data?.label_url, data?.label, data?.Label];
+  for (const value of candidates.flat()) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+async function recordShipResponse(returnRequestId: string, data: any) {
+  try {
+    const label = await prisma.returnLabel.findUnique({ where: { returnRequestId } });
+    await prisma.trackingEvent.create({
+      data: {
+        returnLabelId: label?.id ?? null,
+        returnRequestId,
+        status: "label_missing",
+        message: `ShippyPro reply had no label link. Fields received: ${Object.keys(data ?? {}).join(", ") || "none"}`,
+        raw: JSON.stringify(data ?? null).slice(0, 20_000),
+      },
+    });
+  } catch (e) {
+    console.error("[ShippyPro] Could not record the Ship response:", e);
   }
 }
 

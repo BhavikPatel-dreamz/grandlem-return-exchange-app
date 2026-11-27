@@ -22,6 +22,7 @@ const world = vi.hoisted(() => {
     carriers: [] as any[],
     emails: [] as { to: string; subject?: string; event?: string; vars?: any }[],
     calls: [] as { method: string; params: any }[],
+    events: [] as any[],
     // ShippyPro method handlers; a test can replace any of them.
     shippypro: {} as Record<string, (params: any) => any>,
     order: null as any,
@@ -79,6 +80,7 @@ const world = vi.hoisted(() => {
     state.carriers = [{ id: "car_1", shop: SHOP, shippyproCarrierId: "501", name: "UPS", service: "Ground" }];
     state.emails = [];
     state.calls = [];
+    state.events = [];
     state.order = {
       shippingAddress: {
         name: "Test Buyer", address1: "1 Main St", address2: "", city: "New York", zip: "10001",
@@ -179,6 +181,12 @@ vi.mock("../app/db.server", () => {
         const rows = state.returnLabels.filter((l) => matches(l, where));
         rows.forEach((l) => Object.assign(l, data));
         return { count: rows.length };
+      },
+    },
+    trackingEvent: {
+      create: async ({ data }: any) => {
+        state.events.push(data);
+        return data;
       },
     },
     carrier: {
@@ -387,6 +395,21 @@ describe("createReturnLabel", () => {
     expect(state.returnLabels[0]).toMatchObject({ status: "needs_review", shippyproOrderId: "888" });
     expect((await createReturnLabel("rr_1")).ok).toBe(false);
     expect(shipCalls()).toHaveLength(1);
+  });
+
+  it("finds the label in LabelURL when PDF is an empty list", async () => {
+    state.shippypro.Ship = () => ({ Result: "OK", NewOrderID: 999, PDF: [], LabelURL: "https://labels.example/999.pdf" });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(state.returnLabels[0]).toMatchObject({ status: "created", labelUrl: "https://labels.example/999.pdf" });
+  });
+
+  it("records ShippyPro's reply when no label link is found", async () => {
+    state.shippypro.Ship = () => ({ Result: "OK", NewOrderID: 888, PDF: [] });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    await createReturnLabel("rr_1");
+    expect(state.events[0]).toMatchObject({ status: "label_missing", returnRequestId: "rr_1" });
+    expect(state.events[0].message).toContain("NewOrderID");
   });
 
   it("allows a new label after the old one is voided", async () => {
