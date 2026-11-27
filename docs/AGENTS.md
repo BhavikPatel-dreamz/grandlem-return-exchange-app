@@ -22,4 +22,3 @@ Checks before committing: `npm test`, `npm run typecheck`, and `npx react-router
 - **Sweden customs rule (G4):** every return to a Swedish warehouse needs HS codes, including returns from inside Sweden. Waiting on the client's answer.
 - **Tracking webhook hardening (S4):** `/webhooks/shippypro` is unauthenticated and its `orderNumber` fallback is not shop-scoped. Add a shared secret and match only by our own shipment id / tracking number.
 - Never create a real label without the run book in `docs/audit/DEVELOPMENT_STORE_TESTING_PLAN.md` §6 and explicit per-run approval. Never test on the live client store.
-- First tasks once approved: S5 (mock harness) → S1 (idempotent label) → A1 (approval guard) → S2 (test mode) → S3 → S4. See `docs/audit/IMPLEMENTATION_ROADMAP.md`.
