@@ -46,6 +46,7 @@ export async function buildShopEmail(shop: string, templateBody: string, vars: E
 const PLAIN_LAYOUT: EmailLayout = {
   showLogo: false,
   logoUrl: "",
+  logoHeight: 48,
   showStoreName: false,
   storeName: "",
   headerBgColor: "#ffffff",
