@@ -77,7 +77,10 @@ export async function shippyproCall(method: string, params: Record<string, unkno
         continue;
       }
       const json = await res.json();
-      if (json?.error || (json?.Result && String(json.Result).toUpperCase() !== "OK")) {
+      const resultOk = String(json?.Result ?? "").toUpperCase() === "OK";
+      // Some ShippyPro errors carry only ErrorMessage, with no Result field.
+      const errorMessageOnly = !resultOk && typeof json?.ErrorMessage === "string" && json.ErrorMessage.trim() !== "";
+      if (json?.error || errorMessageOnly || (json?.Result && !resultOk)) {
         return {
           ok: false,
           error: String(json.ErrorMessage || json.error || json.Result),
@@ -765,7 +768,8 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
         labelUrl: labelUrl ?? null,
         trackingNumber: trackingNumber ?? null,
         trackingUrl: trackingUrl ?? null,
-        status: labelUrl ? "created" : "needs_review",
+        // No label and no shipment id: we cannot tell whether a shipment exists.
+        status: labelUrl ? "created" : shippyproOrderId ? "needs_review" : "unknown",
         customsData: JSON.stringify(customs),
       },
     });
@@ -776,8 +780,8 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
       // Keep ShippyPro's reply so the missing label can be diagnosed (shown under Tracking Events).
       console.error(`[ShippyPro] Ship returned no label URL for request ${rr.id}. Response fields: ${Object.keys(data ?? {}).join(", ")}`);
       await recordShipResponse(rr.id, data);
-      await notifyLabelFailure(rr.shop, rr.orderNumber, "ShippyPro accepted the shipment but did not return a label URL");
-      return { ok: false, error: blockedLabelMessage("needs_review", rr.orderNumber) };
+      await notifyLabelFailure(rr.shop, rr.orderNumber, "ShippyPro's reply contained no label URL");
+      return { ok: false, error: blockedLabelMessage(shippyproOrderId ? "needs_review" : "unknown", rr.orderNumber) };
     }
     return { ok: true };
   } catch (e) {
@@ -821,7 +825,14 @@ async function recordShipResponse(returnRequestId: string, data: any) {
  */
 export async function confirmNoShipment(returnRequestId: string): Promise<{ ok: boolean; error?: string }> {
   const result = await prisma.returnLabel.updateMany({
-    where: { returnRequestId, status: { in: ["unknown", "sending"] } },
+    where: {
+      returnRequestId,
+      OR: [
+        { status: { in: ["unknown", "sending"] } },
+        // Older attempts were marked needs_review even without a shipment id.
+        { status: "needs_review", shippyproOrderId: null },
+      ],
+    },
     data: { status: "failed" },
   });
   return result.count === 1 ? { ok: true } : { ok: false, error: "There is no unconfirmed label attempt for this request." };

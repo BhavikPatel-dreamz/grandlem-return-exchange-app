@@ -412,6 +412,35 @@ describe("createReturnLabel", () => {
     expect(state.events[0].message).toContain("NewOrderID");
   });
 
+  it("treats a reply with only an ErrorMessage as a failure, so a retry is allowed", async () => {
+    state.shippypro.Ship = () => ({ ErrorMessage: "Carrier service not enabled" });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.error).toContain("Carrier service not enabled");
+    expect(state.returnLabels[0].status).toBe("failed");
+  });
+
+  it("marks a reply with neither label nor shipment id as unknown, not void-able", async () => {
+    state.shippypro.Ship = () => ({ Result: "OK" });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.error).toContain("unknown result");
+    expect(state.returnLabels[0]).toMatchObject({ status: "unknown", shippyproOrderId: null });
+  });
+
+  it("unblocks an older needs_review label that has no shipment id", async () => {
+    state.returnLabels.push({ id: "lbl_old", returnRequestId: "rr_1", status: "needs_review", shippyproOrderId: null });
+    const { confirmNoShipment, createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await confirmNoShipment("rr_1")).ok).toBe(true);
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+  });
+
+  it("does not unblock a needs_review label that has a shipment id (it must be voided)", async () => {
+    state.returnLabels.push({ id: "lbl_old", returnRequestId: "rr_1", status: "needs_review", shippyproOrderId: "888" });
+    const { confirmNoShipment } = await import("../app/services/shippypro.server");
+    expect((await confirmNoShipment("rr_1")).ok).toBe(false);
+  });
+
   it("allows a new label after the old one is voided", async () => {
     const { createReturnLabel, voidReturnLabel } = await import("../app/services/shippypro.server");
     await createReturnLabel("rr_1");
