@@ -521,6 +521,14 @@ describe("shipment pre-flight", () => {
     expect(shipCalls()).toHaveLength(0);
   });
 
+  it("uses a phone saved in Settings even when only the phone is filled in", async () => {
+    state.location.address.phone = "";
+    state.settings[world.SHOP].warehouseAddressesPerMarket = JSON.stringify({ DEFAULT: { phone: "+46800000000" } });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(shipCalls()[0].params.to_address).toMatchObject({ street1: "9 Dock Rd", phone: "+46800000000" });
+  });
+
   it("sends 2-letter country codes even when Settings hold a country name", async () => {
     state.settings[world.SHOP].warehouseAddressesPerMarket = JSON.stringify({
       US: { name: "US Returns", address1: "1 Return Ln", city: "Austin", zip: "73301", country: "United States", phone: "+1512000" },
