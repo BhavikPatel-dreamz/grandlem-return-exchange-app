@@ -133,6 +133,10 @@ vi.mock("../app/db.server", () => {
     settings: {
       findUnique: async ({ where }: any) => state.settings[where.shop] ?? null,
       create: async ({ data }: any) => (state.settings[data.shop] = { ...data }),
+      upsert: async ({ where, create, update }: any) =>
+        (state.settings[where.shop] = state.settings[where.shop]
+          ? Object.assign(state.settings[where.shop], update)
+          : { ...create }),
     },
     returnRequest: {
       findUnique: async ({ where }: any) => withRelations(state.returnRequests.find((r) => r.id === where.id)),
@@ -643,5 +647,45 @@ describe("test store mode", () => {
     const { emailRecipientFor } = await import("../app/services/test-mode.server");
     expect(emailRecipientFor(world.SHOP, "buyer@example.com")).toBe("qa@example.com");
     expect(emailRecipientFor("live-store.myshopify.com", "buyer@example.com")).toBe("buyer@example.com");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ShippyPro connection form
+// ---------------------------------------------------------------------------
+
+describe("ShippyPro connection settings", () => {
+  async function saveKey(key: string, url: string | null) {
+    const { saveShippyproConnection } = await import("../app/services/shippypro.server");
+    await saveShippyproConnection(world.SHOP, key, url);
+    return state.settings[world.SHOP];
+  }
+
+  it("shows only a masked hint of the saved key", async () => {
+    const { maskShippyproKey } = await import("../app/services/shippypro.server");
+    const saved = await saveKey("live-secret-key-abcd", null);
+    expect(saved.shippyproApiKeyHint).toBe("abcd");
+    expect(maskShippyproKey(saved.shippyproApiKeyHint)).toBe("••••••••••••abcd");
+    expect(maskShippyproKey(saved.shippyproApiKeyHint)).not.toContain("secret");
+  });
+
+  it("keeps the saved key when the masked value or an empty field is submitted", async () => {
+    const first = await saveKey("live-secret-key-abcd", null);
+    const encrypted = first.shippyproApiKeyEncrypted;
+    expect((await saveKey("••••••••••••abcd", "https://custom.example/v1")).shippyproApiKeyEncrypted).toBe(encrypted);
+    expect(state.settings[world.SHOP].shippyproApiUrl).toBe("https://custom.example/v1");
+    expect((await saveKey("", null)).shippyproApiKeyEncrypted).toBe(encrypted);
+  });
+
+  it("replaces the key when a new one is typed", async () => {
+    const first = await saveKey("live-secret-key-abcd", null);
+    const encrypted = first.shippyproApiKeyEncrypted;
+    const second = await saveKey("new-key-wxyz", null);
+    expect(second.shippyproApiKeyEncrypted).not.toBe(encrypted);
+    expect(second.shippyproApiKeyHint).toBe("wxyz");
+  });
+
+  it("does not store the pre-filled default URL as a custom URL", async () => {
+    expect((await saveKey("", "https://api.shippypro.com/v1/")).shippyproApiUrl).toBeNull();
   });
 });

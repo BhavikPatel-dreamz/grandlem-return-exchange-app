@@ -863,6 +863,33 @@ export async function requestPickup(
 }
 
 
+/** Placeholder shown in the settings form instead of the saved key. */
+export const SHIPPYPRO_KEY_MASK_PREFIX = "••••••••••••";
+
+export function maskShippyproKey(hint: string | null | undefined): string {
+  return `${SHIPPYPRO_KEY_MASK_PREFIX}${hint || ""}`;
+}
+
+/**
+ * Saves the connection from the settings form. An empty or still-masked key
+ * field keeps the saved key, so changing only the URL never erases it.
+ */
+export async function saveShippyproConnection(shop: string, submittedKey: string, submittedUrl: string | null): Promise<void> {
+  const key = submittedKey.trim();
+  // The form pre-fills the default endpoint; storing it would override SHIPPYPRO_API_URL.
+  const cleanUrl = submittedUrl?.trim().replace(/\/+$/, "") || null;
+  const apiUrl = cleanUrl === DEFAULT_SHIPPYPRO_URL ? null : cleanUrl;
+  if (!key || key.startsWith(SHIPPYPRO_KEY_MASK_PREFIX)) {
+    await prisma.settings.upsert({
+      where: { shop },
+      create: { shop, shippyproApiUrl: apiUrl },
+      update: { shippyproApiUrl: apiUrl },
+    });
+    return;
+  }
+  await setShippyproApiKey(shop, key, apiUrl);
+}
+
 export async function setShippyproApiKey(shop: string, apiKey: string, apiUrl?: string | null): Promise<void> {
   const trimmed = apiKey.trim();
   const hint = trimmed.length >= 4 ? trimmed.slice(-4) : (trimmed || null);

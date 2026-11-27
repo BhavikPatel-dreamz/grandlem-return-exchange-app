@@ -31,7 +31,7 @@ import {
   upsertDeadlineExtension,
   deleteDeadlineExtension,
 } from "../services/deadline-extensions.server";
-import { syncCarriers, setShippyproApiKey, getShippyproConnection } from "../services/shippypro.server";
+import { syncCarriers, saveShippyproConnection, getShippyproConnection, maskShippyproKey } from "../services/shippypro.server";
 
 const ROUTING_MARKETS = ["DEFAULT", "US", "SE", "GB"] as const;
 const DEADLINE_UNIT_DAYS = { days: 1, weeks: 7, months: 30 } as const;
@@ -91,7 +91,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     reasons,
     exclusions,
     deadlineExtensions,
-    shippypro: await getShippyproConnection(shop),
+    shippypro: await (async () => {
+      const connection = await getShippyproConnection(shop);
+      // Only the masked hint goes to the browser, never the key itself.
+      return { ...connection, maskedKey: connection.hasKey ? maskShippyproKey(connection.hint) : "" };
+    })(),
     carriers: await prisma.carrier.findMany({
       where: { shop },
       orderBy: { name: "asc" },
@@ -299,7 +303,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (intent === "save_shippypro_key") {
-      await setShippyproApiKey(
+      await saveShippyproConnection(
         shop,
         String(formData.get("shippyproApiKey") || ""),
         String(formData.get("shippyproApiUrl") || "").trim() || null,
@@ -875,15 +879,22 @@ export function SettingsView() {
                   ShippyPro API key <span style={{ color: "#de4066" }}>*</span>
                 </label>
                 <input
+                  key={data.shippypro.maskedKey}
                   id="shippyproApiKey"
-                  type="password"
+                  type="text"
                   name="shippyproApiKey"
-                  placeholder={data.shippypro.hasKey ? "Enter new API key to replace current" : "Enter your ShippyPro API key"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  defaultValue={data.shippypro.maskedKey}
+                  onFocus={(e) => e.currentTarget.select()}
+                  placeholder="Enter your ShippyPro API key"
                   className="returbo-detail-input"
-                  style={{ width: "100%", height: 38 }}
+                  style={{ width: "100%", height: 38, fontFamily: data.shippypro.hasKey ? "monospace" : undefined }}
                 />
                 <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "#64748b" }}>
-                  Generate your API key in ShippyPro &gt; Integrations &gt; API.
+                  {data.shippypro.hasKey
+                    ? "A key is saved (only the last 4 characters are shown). Type a new key to replace it; leave it as is to keep it."
+                    : "Generate your API key in ShippyPro > Integrations > API."}
                 </p>
               </div>
 
@@ -895,7 +906,8 @@ export function SettingsView() {
                   id="shippyproApiUrl"
                   type="text"
                   name="shippyproApiUrl"
-                  defaultValue={data.shippypro.apiUrl || ""}
+                  key={data.shippypro.apiUrl || "default"}
+                  defaultValue={data.shippypro.apiUrl || "https://api.shippypro.com/v1"}
                   placeholder="https://api.shippypro.com/v1"
                   className="returbo-detail-input"
                   style={{ width: "100%", height: 38 }}
