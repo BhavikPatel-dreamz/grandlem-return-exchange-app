@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useLoaderData } from "react-router";
+import { Form, Link, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
@@ -143,6 +143,7 @@ function EmptyReturnsIllustration() {
 
 export default function ReturnsListPage() {
   const data = useLoaderData<typeof loader>();
+  const navigation = useNavigation();
   const currentStatus = data.filters.status || "";
   const dateLocale = "en-GB";
   const formatDate = (date: string | Date) => new Intl.DateTimeFormat(dateLocale).format(new Date(date));
@@ -432,8 +433,14 @@ export default function ReturnsListPage() {
                         )}
                       </td>
                       <td style={{ textAlign: "right" }}>
-                        <Link to={`/app/returns/${r.id}`} className="returbo-view-link">
-                          View →
+                        <Link
+                          to={`/app/returns/${r.id}`}
+                          className="returbo-view-link"
+                          aria-busy={navigation.state === "loading" && navigation.location?.pathname === `/app/returns/${r.id}`}
+                        >
+                          {navigation.state === "loading" && navigation.location?.pathname === `/app/returns/${r.id}`
+                            ? <span className="returbo-inline-loading">Loading...</span>
+                            : "View →"}
                         </Link>
                       </td>
                     </tr>

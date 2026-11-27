@@ -105,26 +105,7 @@ export function card(inner: string, heading?: string): string {
 }
 
 export function topBar(): string {
-  const flagSvg = `<svg class="glr-flag-svg" width="24" height="16" viewBox="0 0 24 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="24" height="16" rx="2" fill="#B22234"/>
-        <path d="M0 2.46H24M0 4.92H24M0 7.38H24M0 9.85H24M0 12.31H24M0 14.77H24" stroke="white" stroke-width="1.23"/>
-        <rect width="9.6" height="8.62" rx="1" fill="#3C3B6E"/>
-        <circle cx="2" cy="1.8" r="0.6" fill="white"/>
-        <circle cx="4.8" cy="1.8" r="0.6" fill="white"/>
-        <circle cx="7.6" cy="1.8" r="0.6" fill="white"/>
-        <circle cx="3.4" cy="4.3" r="0.6" fill="white"/>
-        <circle cx="6.2" cy="4.3" r="0.6" fill="white"/>
-        <circle cx="2" cy="6.8" r="0.6" fill="white"/>
-        <circle cx="4.8" cy="6.8" r="0.6" fill="white"/>
-        <circle cx="7.6" cy="6.8" r="0.6" fill="white"/>
-      </svg>`;
-
-  return `<div class="glr-topbar">
-  <div class="glr-locale-static">
-    ${flagSvg}
-    <span>English</span>
-  </div>
-</div>`;
+  return "";
 }
 
 export function orderFooter(): string {
@@ -136,8 +117,9 @@ export function orderFooter(): string {
 }
 
 const STYLES = `<style>
-.glr { max-width: 42rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-.glr-order-page { max-width: 38rem; padding: 2rem 1.5rem 4rem; }
+.glr { max-width: 680px; width: 100%; margin: 0 auto; padding: 3rem 1.5rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; box-sizing: border-box; }
+.glr-order-page { max-width: 680px; width: 100%; padding: 2rem 1rem 4rem; margin: 0 auto; box-sizing: border-box; }
+.glr-order-page .glr-stack { width: 100%; max-width: 100%; display: flex; flex-direction: column; gap: 1.25rem; align-items: stretch; }
 .glr h1 { margin: 0 0 .5rem; }
 .glr-lead { margin: 0 0 2rem; opacity: .75; }
 .glr-stack { display: flex; flex-direction: column; gap: 1.25rem; }
@@ -193,7 +175,7 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-eyebrow { color: #e24d5b; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 12px 0; text-align: center; display: block; }
 .glr-title { color: #0f172a; font-size: 34px; font-weight: 700; line-height: 1.2; letter-spacing: -0.025em; margin: 0 0 12px 0; text-align: center; }
 @media (max-width: 480px) { .glr-title { font-size: 26px; } }
-.glr-subtitle { color: #64748b; font-size: 15px; line-height: 1.5; max-width: 440px; margin: 0 auto; text-align: center; opacity: 1; }
+.glr-subtitle { color: #64748b; font-size: 15px; line-height: 1.5; max-width: 560px; margin: 0 auto; text-align: center; opacity: 1; }
 
 /* Order card */
 .glr-order-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 24px; padding: 32px 32px 28px 32px; max-width: 450px; width: 100%; margin: 0 auto; box-sizing: border-box; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02); }
@@ -380,6 +362,99 @@ details.glr-card > .glr-card { border: 0; padding: 0; }
 .glr-conf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 380px; height: 48px; background: var(--glr-primary, #e52b5a); color: var(--glr-btn-text, #ffffff); border-radius: 12px; font-size: 15px; font-weight: 700; text-decoration: none; transition: background 0.15s ease, transform 0.15s ease; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); font-family: inherit; margin: 0 auto; }
 .glr-conf-btn:hover { filter: brightness(0.92); color: var(--glr-btn-text, #ffffff); text-decoration: none; }
 .glr-conf-btn:active { filter: brightness(0.85); transform: scale(0.99); }
+
+/* Logged-in Customer Orders Card & Styles */
+.glr-header-icon-box { width: 52px; height: 52px; border-radius: 14px; background: var(--glr-secondary-bg, #feeef2); color: var(--glr-primary, #de4066); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; }
+.glr-orders-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 24px; padding: 26px 32px; width: 100% !important; max-width: 680px !important; margin: 0 auto; box-sizing: border-box !important; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02); }
+.glr-orders-card form { width: 100% !important; box-sizing: border-box !important; }
+.glr-orders-search-wrap { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 14px; width: 100% !important; box-sizing: border-box !important; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.glr-orders-search-wrap:focus-within { border-color: var(--glr-primary, #de4066); box-shadow: 0 0 0 1px var(--glr-primary, #de4066); }
+.glr-orders-search-icon { flex-shrink: 0; color: #9ca3af; }
+.glr-orders-search-input,
+.glr-orders-search-wrap input.glr-orders-search-input,
+input#glr-orders-search {
+  width: 100% !important;
+  border: none !important;
+  border-width: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  font-size: 14px !important;
+  color: #0f172a !important;
+  font-family: inherit !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+}
+.glr-orders-search-input:focus,
+.glr-orders-search-wrap input.glr-orders-search-input:focus,
+input#glr-orders-search:focus {
+  border: none !important;
+  border-width: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+.glr-orders-search-input::placeholder { color: #9ca3af; opacity: 1; }
+.glr-orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; width: 100% !important; box-sizing: border-box !important; }
+.glr-order-item-wrap { border-bottom: 1px solid #f1f5f9; width: 100% !important; box-sizing: border-box !important; }
+.glr-order-item-wrap:last-child { border-bottom: none; }
+.glr-order-row-btn { width: 100% !important; display: flex !important; align-items: center !important; justify-content: space-between !important; padding: 14px 10px; background: transparent; border: none; border-radius: 10px; cursor: pointer; text-align: left; transition: background-color 0.15s ease; font-family: inherit; -webkit-appearance: none; appearance: none; box-sizing: border-box !important; text-decoration: none; }
+.glr-order-row-btn:hover { background-color: #f8fafc; }
+.glr-order-pkg-box { width: 38px; height: 38px; border-radius: 10px; background: var(--glr-secondary-bg, #feeef2); color: var(--glr-primary, #de4066); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.glr-order-row-name { font-size: 15px; font-weight: 700; color: #0f172a; margin-left: 14px; min-width: 70px; flex-shrink: 0; white-space: nowrap; }
+.glr-order-row-date { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: #64748b; margin-left: 16px; flex: 1 1 auto; white-space: nowrap; min-width: 0; }
+.glr-order-row-date span { white-space: nowrap; word-break: keep-all; }
+.glr-cal-icon { flex-shrink: 0; color: #9ca3af; }
+.glr-order-status-wrap { flex-shrink: 0; margin-left: 16px; }
+.glr-status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 5px 14px; border-radius: 9999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.glr-status-badge--fulfilled { background: #dcfce7; color: #15803d; }
+.glr-status-badge--partially { background: #fef3c7; color: #b45309; }
+.glr-status-badge--other { background: #f3f4f6; color: #4b5563; }
+.glr-status-check { font-size: 12px; font-weight: 700; }
+.glr-order-row-chevron { color: #9ca3af; display: flex; align-items: center; margin-left: 14px; flex-shrink: 0; }
+.glr-no-search-results { padding: 28px 16px; text-align: center; font-size: 14px; color: #64748b; }
+.glr-orders-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; padding-top: 8px; }
+.glr-pag-arrow { width: 34px; height: 34px; border-radius: 8px; border: 1px solid #e5e7eb; background: #ffffff; color: #4b5563; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s ease; font-family: inherit; padding: 0; }
+.glr-pag-arrow:hover:not(:disabled) { border-color: #cbd5e1; background: #f8fafc; }
+.glr-pag-arrow:disabled, .glr-pag-arrow.glr-pag-disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+.glr-pag-pages { display: flex; align-items: center; gap: 6px; }
+.glr-pag-num { width: 34px; height: 34px; border-radius: 50%; border: none; background: transparent; color: #4b5563; font-size: 13.5px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s ease; font-family: inherit; padding: 0; }
+.glr-pag-num:hover:not(.glr-pag-num--active) { background: #f1f5f9; color: #0f172a; }
+.glr-pag-num--active { background: var(--glr-primary, #de4066); color: var(--glr-btn-text, #ffffff); font-weight: 700; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); cursor: default; }
+
+/* "Order not listed?" card */
+.glr-unlisted-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 20px 28px; width: 100% !important; max-width: 680px !important; margin: 18px auto 0 auto; box-sizing: border-box !important; display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 16px !important; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02); }
+.glr-unlisted-left { display: flex !important; align-items: center !important; gap: 16px !important; flex: 1 1 auto !important; min-width: 0 !important; }
+.glr-unlisted-icon { width: 38px; height: 38px; border-radius: 50%; background: var(--glr-secondary-bg, #feeef2); color: var(--glr-primary, #de4066); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.glr-unlisted-content { display: flex !important; flex-direction: column !important; gap: 3px !important; text-align: left !important; flex: 1 1 auto !important; min-width: 0 !important; }
+.glr-unlisted-title { font-size: 15px; font-weight: 700; color: #0f172a; white-space: nowrap; }
+.glr-unlisted-subtitle { font-size: 13.5px; color: #64748b; line-height: 1.35; }
+.glr-unlisted-btn { background: #ffffff; border: 1.5px solid var(--glr-primary, #de4066); color: var(--glr-primary, #de4066); border-radius: 10px; padding: 10px 22px; font-size: 13.5px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.15s ease; font-family: inherit; flex-shrink: 0 !important; }
+.glr-unlisted-btn:hover { background: var(--glr-secondary-bg, #feeef2); }
+.glr-unlisted-guest-wrap { margin-top: 18px; width: 100% !important; max-width: 680px !important; margin-left: auto; margin-right: auto; box-sizing: border-box !important; }
+.glr-unlisted-guest-wrap .glr-order-card { max-width: 100% !important; width: 100% !important; box-sizing: border-box !important; }
+.glr-hidden { display: none !important; }
+
+@media (max-width: 680px) {
+  .glr-order-page { padding: 1.5rem 14px 3rem; }
+  .glr-orders-card { padding: 20px 16px; border-radius: 18px; }
+  .glr-order-row-btn { padding: 12px 6px; }
+  .glr-order-row-name { margin-left: 10px; font-size: 14px; min-width: 55px; }
+  .glr-order-row-date { margin-left: 10px; font-size: 12.5px; }
+  .glr-status-badge { padding: 4px 10px; font-size: 11.5px; margin-left: 8px; }
+  .glr-order-row-chevron { margin-left: 8px; }
+}
+@media (max-width: 540px) {
+  .glr-unlisted-card { flex-direction: column !important; align-items: stretch !important; text-align: left; padding: 18px; gap: 14px !important; }
+  .glr-unlisted-left { align-items: flex-start !important; }
+  .glr-unlisted-btn { width: 100%; text-align: center; }
+}
 </style>`;
 
 /** Wraps a screen in the page container. Shopify adds the theme header/footer. */
@@ -388,6 +463,7 @@ export function page(opts: {
   lead?: string;
   body: string;
   eyebrow?: string;
+  headerIcon?: string;
   showTopbar?: boolean;
   showFooter?: boolean;
   lang?: ProxyLang;
@@ -399,6 +475,7 @@ export function page(opts: {
   const topbar = false ? topBar() : "";
   const footer = opts.showFooter ? orderFooter() : "";
   const eyebrow = opts.eyebrow ? `<div class="glr-eyebrow">${esc(opts.eyebrow)}</div>` : "";
+  const headerIcon = opts.headerIcon ? opts.headerIcon : "";
   const customStyles = opts.customization
     ? `<style>
 :root {
@@ -424,6 +501,7 @@ export function page(opts: {
 <div class="page-width glr glr-order-page">
   ${topbar}
   <div class="glr-header-center">
+    ${headerIcon}
     ${eyebrow}
     <h1 class="glr-title">${esc(opts.title)}</h1>
     ${opts.lead ? `<p class="glr-subtitle">${esc(opts.lead)}</p>` : ""}

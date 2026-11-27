@@ -6,12 +6,13 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { GrandLeMarHeader } from "../components/admin/GrandLeMarHeader";
-import { createReturnLabel, voidReturnLabel } from "../services/shippypro.server";
-import { applyReplacementVariants, createExchangePaymentLink, markExchangePaid } from "../services/exchanges.server";
+import { createReturnLabel, fetchWarehouseAddress, voidReturnLabel } from "../services/shippypro.server";
+import { applyReplacementVariants, createExchangePaymentLink } from "../services/exchanges.server";
 import { sendEventEmail } from "../services/email.server";
 import { performRestock } from "../services/restock.server";
 import { issueRefund } from "../services/refunds.server";
 import { createReplacementOrder } from "../services/replacement.server";
+import { decodeReason } from "../services/return-reasons.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -43,6 +44,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
   });
   if (!rr) throw new Response("Not found", { status: 404 });
+  let warehouseAddress = await fetchWarehouseAddress(shop, rr.fulfillmentLocationId);
 
   const itemImages: Record<string, string> = {};
   let customerName = rr.customerName;
@@ -68,6 +70,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           order(id: $id) {
             customer { firstName lastName }
             shippingAddress { name }
+            fulfillmentOrders(first: 10) {
+              edges {
+                node {
+                  assignedLocation { location { id } }
+                }
+              }
+            }
             lineItems(first: 50) {
               edges {
                 node {
@@ -96,6 +105,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         { variables: { id: orderGid } }
       );
       const json = await response.json();
+      if (!warehouseAddress) {
+        const locationId = json?.data?.order?.fulfillmentOrders?.edges
+          ?.map((edge: any) => edge.node?.assignedLocation?.location?.id)
+          .find(Boolean);
+        if (locationId) warehouseAddress = await fetchWarehouseAddress(shop, locationId);
+      }
       const customer = json?.data?.order?.customer;
       customerName ||= [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || json?.data?.order?.shippingAddress?.name || null;
       const lineItemNodes = json?.data?.order?.lineItems?.edges?.map((e: any) => e.node) || [];
@@ -152,8 +167,44 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
-  return { rr: { ...rr, customerName }, itemImages, carrierName };
+  const items = rr.items.map((item) => ({
+    ...item,
+    reason: item.reason ? decodeReason(item.reason) : null,
+  }));
+
+  return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress };
 };
+
+async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumber: string | null; customerEmail: string | null }) {
+  if (!rr.customerEmail) return { ok: false, error: "Customer email is missing" };
+
+  let label = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
+  if (!label || label.status === "failed" || label.status === "voided" || !label.labelUrl) {
+    const generated = await createReturnLabel(rr.id);
+    if (!generated.ok) {
+      return { ok: false, error: `Return label generation failed: ${generated.error || "Unknown error"}` };
+    }
+    label = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
+  }
+  if (!label?.labelUrl) return { ok: false, error: "No return label URL was generated" };
+
+  try {
+    const result = await sendEventEmail(shop, "approved", "en", rr.customerEmail, {
+      customerName: rr.customerEmail,
+      orderNumber: rr.orderNumber,
+      labelLink: label.labelUrl,
+      trackingLink: label.trackingUrl || "",
+    });
+    if (!result.ok) return { ok: false, error: "Approval email delivery failed" };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Approval email delivery failed" };
+  }
+  await prisma.returnRequest.update({
+    where: { id: rr.id },
+    data: { approvalEmailSentAt: new Date() },
+  });
+  return { ok: true };
+}
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -177,17 +228,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         where: { id: actualId },
         data: { status: "Approved", approvedAt: new Date() },
       });
-      if (!rr.label || rr.label.status === "failed" || rr.label.status === "voided") {
-        await createReturnLabel(actualId).catch(() => null);
+      const emailResult = await sendApprovedReturnEmail(shop, rr);
+      if (!emailResult.ok) {
+        return { ok: false, intent, message: `Request approved, but ${emailResult.error}. The approval email was not sent.` };
       }
-      const updated = await prisma.returnRequest.findUnique({ where: { id: actualId }, include: { label: true } });
-      await sendEventEmail(shop, "approved", "en", rr.customerEmail || "", {
-        customerName: rr.customerEmail || "customer",
-        orderNumber: rr.orderNumber,
-        labelLink: updated?.label?.labelUrl || "",
-        trackingLink: updated?.label?.trackingUrl || "",
-      }).catch(() => null);
-      return { ok: true, message: "Request approved successfully" };
+      return { ok: true, intent, message: "Request approved and email sent with the return label" };
+    }
+    if (intent === "retry_approval_email") {
+      if (rr.status !== "Approved") {
+        return { ok: false, intent, message: "Approve the return before retrying its approval email." };
+      }
+      const emailResult = await sendApprovedReturnEmail(shop, rr);
+      if (!emailResult.ok) {
+        return { ok: false, intent, message: `Retry failed: ${emailResult.error}. The approval email was not sent.` };
+      }
+      return { ok: true, intent, message: "Approval email sent with the return label" };
     }
     if (intent === "reject") {
       const reason = String(formData.get("rejectionReason") || "").trim();
@@ -251,24 +306,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true, message: `Replacements saved. Price difference total: ${total.toFixed(2)}` };
     }
     if (intent === "exchange_payment_link") {
+      if (rr.type !== "exchange") {
+        return { ok: false, message: "This action is only available for exchange requests." };
+      }
+      if (rr.status === "Paid" || rr.replacementOrderId) {
+        return { ok: false, message: "This exchange is already approved and has a replacement order." };
+      }
+      if (rr.status === "Awaiting Payment") {
+        return { ok: false, message: "Payment is already pending for this exchange." };
+      }
       const result = await createExchangePaymentLink(shop, actualId, rr.customerEmail);
       if (result.required) {
-        await sendEventEmail(shop, "payment_required", "en", rr.customerEmail || "", {
+        const emailResult = await sendEventEmail(shop, "payment_required", "en", rr.customerEmail || "", {
           customerName: rr.customerEmail || "customer",
           orderNumber: rr.orderNumber,
           amount: result.total.toFixed(2),
           paymentLink: result.invoiceUrl || "",
-        }).catch(() => null);
+        }).catch(() => ({ ok: false }));
+        if (!emailResult.ok) {
+          return { ok: false, message: `Exchange invoice created, but its email could not be sent. Share this Shopify link with the customer: ${result.invoiceUrl}` };
+        }
       }
       if (!result.required) {
-        await prisma.returnRequest.update({ where: { id: actualId }, data: { status: "Approved" } }).catch(() => null);
-        return { ok: true, message: `No price difference (${result.total.toFixed(2)}). Exchange approved.` };
+        return { ok: true, message: `No additional payment required. Replacement order created: ${result.orderId}` };
       }
       return { ok: true, message: `Payment link created: ${result.invoiceUrl}` };
-    }
-    if (intent === "exchange_mark_paid") {
-      await markExchangePaid(actualId);
-      return { ok: true, message: "Exchange marked as paid" };
     }
     if (intent === "status_update") {
       const status = String(formData.get("status") || rr.status);
@@ -322,9 +384,11 @@ function formatDateTime(value: string | Date) {
 }
 
 export default function ReturnDetailPage() {
-  const { rr, itemImages = {}, carrierName } = useLoaderData<typeof loader>();
+  const { rr, itemImages = {}, carrierName, warehouseAddress } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const isApproving = navigation.state !== "idle" && navigation.formData?.get("_action") === "approve";
+  const isRetryingApprovalEmail = navigation.state !== "idle" && navigation.formData?.get("_action") === "retry_approval_email";
   const isGeneratingLabel = navigation.state !== "idle" && navigation.formData?.get("_action") === "regenerate_label";
   const [showRejectForm, setShowRejectForm] = useState(false);
 
@@ -350,7 +414,9 @@ export default function ReturnDetailPage() {
         </div>
 
         {/* Feedback message banner */}
-        {actionData?.message && !(actionData.intent === "regenerate_label" && actionData.ok === false) && (
+        {actionData?.message
+          && !(actionData.intent === "regenerate_label" && actionData.ok === false)
+          && !(actionData.ok === false && (actionData.intent === "approve" || actionData.intent === "retry_approval_email")) && (
           <div className={`returbo-alert-banner ${actionData.ok !== false ? "success" : "error"}`}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {actionData.ok !== false ? (
@@ -367,6 +433,41 @@ export default function ReturnDetailPage() {
               )}
             </svg>
             <span>{actionData.message}</span>
+            {actionData.ok === false
+              && (actionData.intent === "approve" || actionData.intent === "retry_approval_email")
+              && rr.customerEmail && (
+                <Form method="post" style={{ marginLeft: "auto" }}>
+                  <input type="hidden" name="_action" value="retry_approval_email" />
+                  <button type="submit" className="returbo-btn-primary" disabled={isRetryingApprovalEmail} aria-busy={isRetryingApprovalEmail}>
+                    {isRetryingApprovalEmail ? "Retrying..." : "Retry label & email"}
+                  </button>
+                </Form>
+              )}
+          </div>
+        )}
+
+        {rr.status === "Approved" && !rr.approvalEmailSentAt && (
+          <div className="returbo-alert-banner error" role="alert">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span>
+              {actionData?.ok === false && (actionData.intent === "approve" || actionData.intent === "retry_approval_email")
+                ? actionData.message
+                : rr.label?.labelUrl
+                  ? "Approval email has not been sent."
+                  : "Return label has not been generated; the approval email has not been sent."}
+            </span>
+            {rr.customerEmail && (
+              <Form method="post" style={{ marginLeft: "auto" }}>
+                <input type="hidden" name="_action" value="retry_approval_email" />
+                <button type="submit" className="returbo-btn-primary" disabled={isRetryingApprovalEmail} aria-busy={isRetryingApprovalEmail}>
+                  {isRetryingApprovalEmail ? "Retrying..." : "Retry label & email"}
+                </button>
+              </Form>
+            )}
           </div>
         )}
 
@@ -392,7 +493,7 @@ export default function ReturnDetailPage() {
             </h1>
             <div className="returbo-detail-header-badges">
               <span className={`returbo-status-badge ${getStatusBadgeClass(rr.status)}`}>
-                {rr.status}
+                {rr.type === "exchange" && rr.status === "Paid" ? "Exchange approved" : rr.status}
               </span>
               <span className="returbo-badge returbo-badge-gray" style={{ textTransform: "capitalize" }}>
                 {rr.type}
@@ -404,14 +505,20 @@ export default function ReturnDetailPage() {
           </div>
 
           <div className="returbo-detail-header-actions">
-            {rr.status !== "Approved" && (
+            {rr.type !== "exchange" && rr.status !== "Approved" && (
               <Form method="post" style={{ display: "inline" }}>
                 <input type="hidden" name="_action" value="approve" />
-                <button type="submit" className="returbo-btn-primary">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <span>Approve return</span>
+                <button type="submit" className="returbo-btn-primary" disabled={isApproving} aria-busy={isApproving}>
+                  {isApproving ? (
+                    <span className="returbo-inline-loading">Approving...</span>
+                  ) : (
+                    <>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <span>Approve return</span>
+                    </>
+                  )}
                 </button>
               </Form>
             )}
@@ -496,7 +603,9 @@ export default function ReturnDetailPage() {
                   itemImages[it.productId || ""] ||
                   itemImages[it.title?.toLowerCase().trim() || ""] ||
                   it.photos?.[0]?.url;
-                const reasonLabel = it.reason?.labelEn || it.reason?.label || it.reason?.code || "No reason specified";
+                const reasonLabel = it.reason
+                  ? `${it.reason.parentLabel ? `${it.reason.parentLabel} / ` : ""}${it.reason.labelEn}`
+                  : it.reason?.label || it.reason?.code || "No reason specified";
 
                 return (
                   <div key={it.id} className="returbo-detail-item-box">
@@ -745,18 +854,15 @@ export default function ReturnDetailPage() {
                 </Form>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", borderTop: "1px solid #f3f4f6", paddingTop: 14 }}>
-                  <Form method="post">
-                    <input type="hidden" name="_action" value="exchange_payment_link" />
-                    <button type="submit" className="returbo-btn-secondary">
-                      Create payment link / approve exchange
-                    </button>
-                  </Form>
-
-                  {rr.status === "Awaiting Payment" && (
+                  {rr.status === "Paid" || rr.replacementOrderId ? (
+                    <span className="returbo-badge returbo-badge-green">Exchange approved</span>
+                  ) : rr.status === "Awaiting Payment" ? (
+                    <span className="returbo-badge returbo-badge-yellow">Payment pending</span>
+                  ) : (
                     <Form method="post">
-                      <input type="hidden" name="_action" value="exchange_mark_paid" />
-                      <button type="submit" className="returbo-btn-primary">
-                        Mark as paid
+                      <input type="hidden" name="_action" value="exchange_payment_link" />
+                      <button type="submit" className="returbo-btn-secondary">
+                        Create payment link / approve exchange
                       </button>
                     </Form>
                   )}
@@ -800,6 +906,23 @@ export default function ReturnDetailPage() {
                       <tr>
                         <td className="returbo-detail-info-label">Selected Carrier</td>
                         <td className="returbo-detail-info-val">{carrierName || rr.label.connectionId || rr.carrierId || "Default carrier"}</td>
+                      </tr>
+                      <tr>
+                        <td className="returbo-detail-info-label">Shopify warehouse</td>
+                        <td className="returbo-detail-info-val">
+                          {warehouseAddress
+                            ? [
+                                warehouseAddress.name,
+                                warehouseAddress.company,
+                                warehouseAddress.address1,
+                                warehouseAddress.address2,
+                                warehouseAddress.city,
+                                warehouseAddress.state,
+                                warehouseAddress.zip,
+                                warehouseAddress.country,
+                              ].filter(Boolean).join(", ")
+                            : "Fulfillment location address unavailable"}
+                        </td>
                       </tr>
                       <tr>
                         <td className="returbo-detail-info-label">Service</td>

@@ -1,0 +1,1 @@
+ALTER TABLE "ReturnRequest" ADD COLUMN "approvalEmailSentAt" TIMESTAMP(3);
