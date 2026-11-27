@@ -8,6 +8,7 @@ export type EmailLayout = {
   showLogo: boolean;
   /** https URL or an uploaded image as a data URL. */
   logoUrl: string;
+  logoHeight: number;
   showStoreName: boolean;
   storeName: string;
   headerBgColor: string;
@@ -20,9 +21,14 @@ export type EmailLayout = {
   footerTextColor: string;
 };
 
+export const MIN_EMAIL_LOGO_HEIGHT = 24;
+export const MAX_EMAIL_LOGO_HEIGHT = 160;
+export const EMAIL_LOGO_HEIGHT_STEP = 8;
+
 export const DEFAULT_EMAIL_LAYOUT: EmailLayout = {
   showLogo: true,
   logoUrl: "",
+  logoHeight: 48,
   showStoreName: true,
   storeName: "Grand Le Mar",
   headerBgColor: "#ffffff",
@@ -47,9 +53,13 @@ export function normalizeEmailLayout(raw: unknown, base: EmailLayout = DEFAULT_E
     typeof value[key] === "string" ? (value[key] as string) : (base[key] as string);
   const bool = (key: keyof EmailLayout) =>
     typeof value[key] === "boolean" ? (value[key] as boolean) : (base[key] as boolean);
+  const logoHeight = value.logoHeight;
   return {
     showLogo: bool("showLogo"),
     logoUrl: text("logoUrl"),
+    logoHeight: typeof logoHeight === "number" && Number.isFinite(logoHeight)
+      ? Math.min(MAX_EMAIL_LOGO_HEIGHT, Math.max(MIN_EMAIL_LOGO_HEIGHT, Math.round(logoHeight)))
+      : base.logoHeight,
     showStoreName: bool("showStoreName"),
     storeName: text("storeName"),
     headerBgColor: pickColor(value.headerBgColor, base.headerBgColor),
@@ -157,7 +167,7 @@ export function renderEmailDocument(options: {
     : "";
 
   const logo = layout.showLogo && logoSrc
-    ? `<img src="${escapeHtml(logoSrc)}" alt="${escapeHtml(storeName || "Logo")}" height="48" style="display:block;margin:0 auto;max-height:48px;max-width:200px;height:auto;border:0;">`
+    ? `<img src="${escapeHtml(logoSrc)}" alt="${escapeHtml(storeName || "Logo")}" height="${layout.logoHeight}" style="display:block;margin:0 auto;height:${layout.logoHeight}px;max-height:${layout.logoHeight}px;max-width:100%;width:auto;border:0;">`
     : "";
   const name = layout.showStoreName && storeName
     ? `<div style="margin-top:${logo ? "10px" : "0"};font-size:20px;font-weight:700;letter-spacing:0.02em;color:${layout.headerTextColor};">${escapeHtml(storeName)}</div>`

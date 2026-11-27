@@ -29,7 +29,6 @@ import { SettingsLayout } from "../components/admin/SettingsLayout";
 import { ReturnFormPreview } from "../components/admin/ReturnFormPreview";
 import { EmailLayoutEditor } from "../components/admin/EmailLayoutEditor";
 import { EmailPreview } from "../components/admin/EmailPreview";
-import { wrapEmailHtml } from "../services/email-html";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -555,7 +554,7 @@ function generateSampleEmailHtml(body: string, data: any): string {
     orderNumber: "#1026",
     request_number: "GLM-1026",
     requestNumber: "GLM-1026",
-    company_name: data.customization?.storeName || "Grand Le Mar",
+    company_name: data.emailLayout.storeName || "Grand Le Mar",
     support_email: data.emailFrom || "support@grandlemar.com",
     returns_url: data.returnsUrl || "https://grandlemar.com/returns",
     label_link: "https://grandlemar.com/return-label.pdf",
@@ -578,7 +577,17 @@ function generateSampleEmailHtml(body: string, data: any): string {
     rendered = rendered.replace(doubleRegex, val).replace(singleRegex, val);
   }
 
-  return wrapEmailHtml(rendered, data.customization?.storeName || "Grand Le Mar");
+  const vars = {
+    ...SAMPLE_EMAIL_VARS,
+    ...sampleVars,
+    storeName: data.emailLayout.storeName,
+    returnsUrl: data.returnsUrl,
+  };
+  return renderEmailDocument({
+    layout: data.emailLayout,
+    bodyHtml: renderTemplateHtml(rendered, {}),
+    vars,
+  });
 }
 
 export default function EmailTemplatesPage() {
@@ -1815,7 +1824,15 @@ export default function EmailTemplatesPage() {
                               <button
                                 type="button"
                                 className="returbo-email-preview-btn"
-                                onClick={() => setPreviewModalTemplate(t)}
+                                onClick={(event) => {
+                                  const form = event.currentTarget.closest("form");
+                                  const formData = form ? new FormData(form) : null;
+                                  setPreviewModalTemplate({
+                                    ...t,
+                                    subject: String(formData?.get("subject") ?? t.subject),
+                                    body: String(formData?.get("body") ?? t.body),
+                                  });
+                                }}
                                 style={{ height: 36, padding: "0 14px" }}
                               >
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
