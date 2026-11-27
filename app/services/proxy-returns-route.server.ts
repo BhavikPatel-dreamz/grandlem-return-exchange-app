@@ -71,7 +71,7 @@ const COPY = {
     guestHeading: "Let's find your order",
     guestIntro: "Enter your order number and the email or phone number used at checkout, we'll pull up the rest.",
     loggedIn: "Choose the order you want to return or exchange.",
-    yourOrders: "Your orders",
+    yourOrders: "Your Orders",
     noOrders: "We couldn’t find any orders on your account. You can still look up an order below.",
     ordersUnavailable: "We couldn’t load your orders right now. You can look up an order below.",
     otherOrder: "Order not listed?",
@@ -263,18 +263,186 @@ function customerOrdersCard(
   ctx: ProxyContext,
   orders: CustomerOrderSummary[],
 ): string {
-  const t = COPY[ctx.lang];
+  const pageSize = 5;
+  const totalPages = Math.ceil(orders.length / pageSize) || 1;
+
   const rows = orders
-    .map(
-      (o) => `<li><button type="submit" name="orderId" value="${esc(o.id)}" class="button button--secondary glr-order">
-  <span class="glr-order__name">${esc(o.name)}</span>
-  <span class="glr-muted">${esc(formatDate(o.createdAt))}</span>
-  <span class="glr-muted">${esc(statusLabel(ctx, o.fulfillmentStatus))}</span>
-</button></li>`,
-    )
+    .map((o, idx) => {
+      const isHidden = idx >= pageSize;
+      const isFulfilled = (o.fulfillmentStatus ?? "").toUpperCase() === "FULFILLED";
+      const isPartially = (o.fulfillmentStatus ?? "").toUpperCase() === "PARTIALLY_FULFILLED";
+      const statusClass = isFulfilled ? "fulfilled" : isPartially ? "partially" : "other";
+      const displayStatus = o.fulfillmentStatus ? statusLabel(ctx, o.fulfillmentStatus) : "Fulfilled";
+
+      return `<li class="glr-order-item-wrap"${isHidden ? ' style="display:none;"' : ""} data-order-name="${esc(o.name.toLowerCase())}">
+  <button type="submit" name="orderId" value="${esc(o.id)}" class="glr-order-row-btn">
+    <div class="glr-order-pkg-box">
+      <svg class="glr-box-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+        <line x1="12" y1="22.08" x2="12" y2="12"></line>
+      </svg>
+    </div>
+    <span class="glr-order-row-name">${esc(o.name)}</span>
+    <span class="glr-order-row-date">
+      <svg class="glr-cal-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+        <line x1="16" y1="2" x2="16" y2="6"></line>
+        <line x1="8" y1="2" x2="8" y2="6"></line>
+        <line x1="3" y1="10" x2="21" y2="10"></line>
+      </svg>
+      <span>${esc(formatDate(o.createdAt))}</span>
+    </span>
+    <span class="glr-order-status-wrap">
+      <span class="glr-status-badge glr-status-badge--${statusClass}">
+        ${isFulfilled ? '<span class="glr-status-check">✓</span> ' : ""}${esc(displayStatus)}
+      </span>
+    </span>
+    <span class="glr-order-row-chevron">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </svg>
+    </span>
+  </button>
+</li>`;
+    })
     .join("");
-  const inner = `<p>${esc(t.loggedIn)}</p><ul class="glr-list">${rows}</ul>`;
-  return card(form(ctx, "select_order", inner), t.yourOrders);
+
+  let pageButtons = "";
+  for (let p = 1; p <= totalPages; p++) {
+    pageButtons += `<button type="button" class="glr-pag-num${p === 1 ? " glr-pag-num--active" : ""}" data-page="${p}">${p}</button>`;
+  }
+
+  const paginationHtml = `<div class="glr-orders-pagination" id="glr-orders-pagination"${totalPages <= 1 ? ' style="display:none;"' : ""}>
+    <button type="button" class="glr-pag-arrow glr-pag-disabled" id="glr-prev-btn" aria-label="Previous page" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </button>
+    <div class="glr-pag-pages" id="glr-pag-pages">
+      ${pageButtons}
+    </div>
+    <button type="button" class="glr-pag-arrow${totalPages <= 1 ? " glr-pag-disabled" : ""}" id="glr-next-btn" aria-label="Next page"${totalPages <= 1 ? " disabled" : ""}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+    </button>
+  </div>`;
+
+  const searchBox = `<div class="glr-orders-search-wrap">
+    <svg class="glr-orders-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"></circle>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
+    <input type="text" id="glr-orders-search" class="glr-orders-search-input" placeholder="Search by order number (e.g. #1028)" autocomplete="off" style="border:none!important;outline:none!important;box-shadow:none!important;background:transparent!important;padding:0!important;height:100%!important;min-height:0!important;width:100%!important;-webkit-appearance:none!important;appearance:none!important;">
+  </div>`;
+
+  const script = `<script>
+(function() {
+  var pageSize = 5;
+  var currentPage = 1;
+  var list = document.getElementById('glr-orders-list');
+  if (!list) return;
+  var items = Array.prototype.slice.call(list.querySelectorAll('.glr-order-item-wrap'));
+  var searchInput = document.getElementById('glr-orders-search');
+  var pagContainer = document.getElementById('glr-orders-pagination');
+  var pagPages = document.getElementById('glr-pag-pages');
+  var prevBtn = document.getElementById('glr-prev-btn');
+  var nextBtn = document.getElementById('glr-next-btn');
+  var noResults = document.getElementById('glr-no-search-results');
+
+  function getMatchingItems() {
+    var q = searchInput ? (searchInput.value || '').trim().toLowerCase() : '';
+    if (!q) return items;
+    var cleanQ = q.replace(/^#/, '');
+    return items.filter(function(el) {
+      var name = (el.getAttribute('data-order-name') || '').toLowerCase();
+      var cleanName = name.replace(/^#/, '');
+      return name.indexOf(q) !== -1 || cleanName.indexOf(cleanQ) !== -1;
+    });
+  }
+
+  function render() {
+    var matched = getMatchingItems();
+    var total = matched.length;
+    var totalPages = Math.ceil(total / pageSize) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+
+    if (noResults) {
+      noResults.style.display = total === 0 ? 'block' : 'none';
+    }
+
+    items.forEach(function(el) { el.style.display = 'none'; });
+
+    var start = (currentPage - 1) * pageSize;
+    var end = start + pageSize;
+    for (var i = start; i < end && i < total; i++) {
+      matched[i].style.display = 'block';
+    }
+
+    if (pagContainer) {
+      pagContainer.style.display = totalPages <= 1 ? 'none' : 'flex';
+    }
+
+    if (prevBtn) {
+      prevBtn.disabled = currentPage <= 1;
+      prevBtn.classList.toggle('glr-pag-disabled', currentPage <= 1);
+    }
+    if (nextBtn) {
+      nextBtn.disabled = currentPage >= totalPages;
+      nextBtn.classList.toggle('glr-pag-disabled', currentPage >= totalPages);
+    }
+
+    if (pagPages) {
+      pagPages.innerHTML = '';
+      for (var p = 1; p <= totalPages; p++) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'glr-pag-num' + (p === currentPage ? ' glr-pag-num--active' : '');
+        btn.textContent = p;
+        btn.setAttribute('data-page', p);
+        (function(pageIndex) {
+          btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            currentPage = pageIndex;
+            render();
+          });
+        })(p);
+        pagPages.appendChild(btn);
+      }
+    }
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', function() {
+      currentPage = 1;
+      render();
+    });
+  }
+  if (prevBtn) {
+    prevBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      if (currentPage > 1) {
+        currentPage--;
+        render();
+      }
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      var matched = getMatchingItems();
+      var totalPages = Math.ceil(matched.length / pageSize) || 1;
+      if (currentPage < totalPages) {
+        currentPage++;
+        render();
+      }
+    });
+  }
+  render();
+})();
+</script>`;
+
+  const formInner = `${searchBox}<ul class="glr-orders-list" id="glr-orders-list">${rows}<li id="glr-no-search-results" class="glr-no-search-results" style="display:none;">No orders found matching your search.</li></ul>${paginationHtml}${script}`;
+
+  return `<div class="glr-orders-card">${form(ctx, "select_order", formInner)}</div>`;
 }
 
 async function startScreen(
@@ -295,12 +463,61 @@ async function startScreen(
       orders = null;
     }
     if (orders && orders.length > 0) {
-      // Guest form stays available for orders placed without the account.
+      const headerIcon = `<div class="glr-header-icon-box">
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+    <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+    <line x1="12" y1="22.08" x2="12" y2="12"></line>
+  </svg>
+</div>`;
+
+      const unlistedCard = `<div class="glr-unlisted-card">
+  <div class="glr-unlisted-left">
+    <div class="glr-unlisted-icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+    </div>
+    <div class="glr-unlisted-content">
+      <div class="glr-unlisted-title">${esc(t.otherOrder)}</div>
+      <div class="glr-unlisted-subtitle">You can still request a return or exchange manually.</div>
+    </div>
+  </div>
+  <button type="button" class="glr-unlisted-btn" id="glr-unlisted-toggle-btn">Find Order</button>
+</div>
+<div class="glr-unlisted-guest-wrap${opts.error ? "" : " glr-hidden"}" id="glr-unlisted-guest-wrap"${opts.error ? "" : ' style="display:none;"'}>
+  ${guestLookupCard(ctx, opts.values, opts.error)}
+</div>
+<script>
+(function() {
+  var toggleBtn = document.getElementById('glr-unlisted-toggle-btn');
+  var formWrap = document.getElementById('glr-unlisted-guest-wrap');
+  if (toggleBtn && formWrap) {
+    toggleBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      var isHidden = formWrap.style.display === 'none' || formWrap.classList.contains('glr-hidden');
+      if (isHidden) {
+        formWrap.style.display = 'block';
+        formWrap.classList.remove('glr-hidden');
+        formWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else {
+        formWrap.style.display = 'none';
+        formWrap.classList.add('glr-hidden');
+      }
+    });
+  }
+})();
+</script>`;
+
       body =
         (opts.error ? errorBox(opts.error) : "") +
         customerOrdersCard(ctx, orders) +
-        `<details class="glr-order-card glr-details-card" style="margin-top:1.5rem;"><summary style="cursor:pointer;font-weight:600;padding:0.5rem 0;">${esc(t.otherOrder)}</summary><div style="margin-top:1.5rem;">${guestLookupCard(ctx, opts.values, opts.error)}</div></details>`;
+        unlistedCard;
+
       return page({
+        headerIcon,
         eyebrow: t.eyebrow,
         title: t.yourOrders,
         lead: t.loggedIn,

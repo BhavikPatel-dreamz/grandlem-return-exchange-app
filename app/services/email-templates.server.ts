@@ -10,6 +10,7 @@ export async function ensureDefaultTemplates(shop: string) {
     { event: "rejected", language: "en", subject: "Your return request was rejected ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour return request for order {{orderNumber}} was rejected.\nReason: {{reason}}\n" },
     { event: "refund_issued", language: "en", subject: "Your refund has been issued ({{orderNumber}})", body: "Hi {{customerName}},\n\nWe have issued a refund of {{amount}} for order {{orderNumber}}.\n\nIt can take a few business days to appear on your statement.\n" },
     { event: "payment_required", language: "en", subject: "Payment required for your exchange ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour exchange for order {{orderNumber}} requires a payment of {{amount}}.\nPay here: {{paymentLink}}\n" },
+    { event: "refund_issued", language: "en", subject: "Your refund has been made ({{orderNumber}})", body: "Hi {{customerName}},\n\nYour refund of {{amount}} for order {{orderNumber}} has been made.\n" },
   ];
 
   for (const d of defaults) {

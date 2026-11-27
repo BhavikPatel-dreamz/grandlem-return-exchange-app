@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useRef, useState, useEffect } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useFetcher, useLoaderData, useSearchParams } from "react-router";
+import { Form, useActionData, useFetcher, useLoaderData, useNavigation, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { storefrontReturnsUrl } from "../services/storefront-links.server";
@@ -29,6 +29,7 @@ import { SettingsLayout } from "../components/admin/SettingsLayout";
 import { ReturnFormPreview } from "../components/admin/ReturnFormPreview";
 import { EmailLayoutEditor } from "../components/admin/EmailLayoutEditor";
 import { EmailPreview } from "../components/admin/EmailPreview";
+import { wrapEmailHtml } from "../services/email-html";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -122,7 +123,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         subject: String(formData.get("subject")),
         body: String(formData.get("body")),
       });
-      return { ok: true, message: "Template saved" };
+      return { ok: true, intent, message: "Template saved" };
     }
     if (intent === "delete_template") {
       await deleteEmailTemplate(shop, String(formData.get("id")));
@@ -158,7 +159,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     return { ok: false, message: "Unknown action" };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "Error" };
+    return { ok: false, intent, message: e instanceof Error ? e.message : "Error" };
   }
 };
 
@@ -220,47 +221,161 @@ function RichTextEditor({ name, initial: rawInitial, onChange }: { name: string;
     sync();
   };
 
-  const toolBtnStyle: React.CSSProperties = {
-    background: "#ffffff",
-    border: "1px solid #d1d5db",
-    borderRadius: 5,
-    padding: "4px 10px",
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#374151",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    lineHeight: 1.3,
-    transition: "all 0.15s ease",
-  };
-
   return (
-    <div style={{ border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden", background: "#ffffff" }}>
-      <div style={{ display: "flex", gap: 6, padding: "8px 10px", borderBottom: "1px solid #e5e7eb", background: "#f9fafb", flexWrap: "wrap", alignItems: "center" }}>
-        {htmlMode ? (
-          <button type="button" onClick={showVisualEditor} style={toolBtnStyle}>Visual editor</button>
-        ) : (
-          <>
-            <button type="button" onClick={() => exec("bold")} style={toolBtnStyle} title="Bold"><strong>B</strong></button>
-            <button type="button" onClick={() => exec("italic")} style={toolBtnStyle} title="Italic"><em>I</em></button>
-            <button type="button" onClick={() => exec("underline")} style={toolBtnStyle} title="Underline"><u>U</u></button>
-            <button type="button" onClick={() => exec("insertUnorderedList")} style={toolBtnStyle} title="List">• List</button>
-            <button type="button" onClick={() => {
-              const url = window.prompt("Link URL");
+    <div className="returbo-editor-box">
+      <div className="returbo-editor-toolbar">
+        {/* Undo / Redo */}
+        <div className="returbo-editor-toolbar-group">
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Undo"
+            onClick={() => exec("undo")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Redo"
+            onClick={() => exec("redo")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Formatting: B, I, U */}
+        <div className="returbo-editor-toolbar-group">
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Bold"
+            onClick={() => exec("bold")}
+          >
+            <span style={{ fontWeight: 700, fontSize: 13, fontFamily: "sans-serif" }}>B</span>
+          </button>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Italic"
+            onClick={() => exec("italic")}
+          >
+            <span style={{ fontStyle: "italic", fontSize: 13, fontFamily: "serif" }}>I</span>
+          </button>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Underline"
+            onClick={() => exec("underline")}
+          >
+            <span style={{ textDecoration: "underline", fontSize: 13, fontWeight: 500 }}>U</span>
+          </button>
+        </div>
+
+        {/* Lists */}
+        <div className="returbo-editor-toolbar-group">
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Bulleted List"
+            onClick={() => exec("insertUnorderedList")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <circle cx="3.5" cy="6" r="1.5" fill="currentColor" />
+              <circle cx="3.5" cy="12" r="1.5" fill="currentColor" />
+              <circle cx="3.5" cy="18" r="1.5" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Numbered List"
+            onClick={() => exec("insertOrderedList")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="10" y1="6" x2="21" y2="6" />
+              <line x1="10" y1="12" x2="21" y2="12" />
+              <line x1="10" y1="18" x2="21" y2="18" />
+              <path d="M4 6h1v4" />
+              <path d="M4 10h2" />
+              <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Indentation */}
+        <div className="returbo-editor-toolbar-group">
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Decrease Indent"
+            onClick={() => exec("outdent")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="7 8 3 12 7 16" />
+              <line x1="21" y1="12" x2="11" y2="12" />
+              <line x1="21" y1="6" x2="11" y2="6" />
+              <line x1="21" y1="18" x2="11" y2="18" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Increase Indent"
+            onClick={() => exec("indent")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="11 8 15 12 11 16" />
+              <line x1="21" y1="12" x2="15" y2="12" />
+              <line x1="21" y1="6" x2="3" y2="6" />
+              <line x1="21" y1="18" x2="3" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Link / HTML Source */}
+        <div className="returbo-editor-toolbar-group" style={{ marginLeft: "auto" }}>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title="Insert Link"
+            onClick={() => {
+              const url = window.prompt("Enter Link URL");
               if (url) exec("createLink", url);
-            }} style={toolBtnStyle} title="Link">Link</button>
-            <button type="button" onClick={() => exec("undo")} style={toolBtnStyle} title="Undo">Undo</button>
-            <button type="button" onClick={showHtmlSource} style={toolBtnStyle} title="HTML source">HTML source</button>
-          </>
-        )}
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="returbo-editor-toolbar-btn"
+            title={htmlMode ? "Visual Editor" : "HTML Source"}
+            onClick={htmlMode ? showVisualEditor : showHtmlSource}
+            style={{ width: "auto", padding: "0 6px", fontSize: 11, fontWeight: 600 }}
+          >
+            {htmlMode ? "Visual" : "<HTML>"}
+          </button>
+        </div>
       </div>
+
       <div
         ref={editorRef}
         contentEditable
         onInput={sync}
-        style={{ minHeight: 180, padding: 14, outline: "none", fontSize: 13, lineHeight: 1.6, color: "#111827", display: htmlMode ? "none" : "block" }}
+        className="returbo-editor-content"
+        style={{ display: htmlMode ? "none" : "block", minHeight: 180 }}
       />
       {htmlMode && (
         <textarea
@@ -272,7 +387,19 @@ function RichTextEditor({ name, initial: rawInitial, onChange }: { name: string;
             if (hiddenRef.current) hiddenRef.current.value = event.currentTarget.value;
             onChange?.(event.currentTarget.value);
           }}
-          style={{ display: "block", boxSizing: "border-box", width: "100%", minHeight: 180, padding: 14, border: 0, outline: "none", resize: "vertical", fontFamily: "monospace", fontSize: 13, background: "#fafafa" }}
+          style={{
+            display: "block",
+            boxSizing: "border-box",
+            width: "100%",
+            minHeight: 180,
+            padding: 14,
+            border: 0,
+            outline: "none",
+            resize: "vertical",
+            fontFamily: "monospace",
+            fontSize: 13,
+            background: "#fafafa",
+          }}
         />
       )}
       <input ref={hiddenRef} type="hidden" name={htmlMode ? undefined : name} defaultValue={initial || ""} />
@@ -290,9 +417,174 @@ function toHexColor(color: string, fallback: string = "#000000"): string {
   return fallback;
 }
 
+const USEFUL_KEYWORDS = [
+  { tag: "{first_name}", desc: "Customer's first name (e.g. John)" },
+  { tag: "{order_number}", desc: "Shopify order number (e.g. #1026)" },
+  { tag: "{request_number}", desc: "Return request number (e.g. GLM-1026)" },
+  { tag: "{company_name}", desc: "Your store name" },
+  { tag: "{support_email}", desc: "Support contact email" },
+  { tag: "{returns_url}", desc: "Direct link to customer returns portal" },
+  { tag: "{label_link}", desc: "Link to download return shipping slip/label" },
+  { tag: "{tracking_link}", desc: "Carrier tracking URL" },
+  { tag: "{items}", desc: "List of items in the return request" },
+  { tag: "{reason}", desc: "Return reason specified by customer" },
+  { tag: "{amount}", desc: "Refund or balance amount" },
+  { tag: "{payment_link}", desc: "Payment link for exchange balance" },
+  { tag: "{days_until_refund}", desc: "Number of days until refund processing" },
+];
+
+function getEventDisplayInfo(event: string) {
+  switch (event) {
+    case "received":
+      return {
+        title: "Request submitted",
+        badgeText: "Request submitted",
+        badgeIcon: "⇄",
+        badgeStyle: { backgroundColor: "#fdf2f4", color: "#de4066", border: "1px solid #fbcfe8" },
+        flow: "return",
+      };
+    case "approved":
+      return {
+        title: "Approved",
+        badgeText: "Incoming",
+        badgeIcon: "→",
+        badgeStyle: { backgroundColor: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
+        flow: "return",
+      };
+    case "no_slip_attached":
+      return {
+        title: "No slip attached",
+        badgeText: "Incoming",
+        badgeIcon: "→",
+        badgeStyle: { backgroundColor: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
+        flow: "return",
+      };
+    case "item_received":
+      return {
+        title: "Item received at warehouse",
+        badgeText: "Incoming",
+        badgeIcon: "→",
+        badgeStyle: { backgroundColor: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
+        flow: "return",
+      };
+    case "refund_issued":
+      return {
+        title: "Refund issued",
+        badgeText: "Resolved",
+        badgeIcon: "✓",
+        badgeStyle: { backgroundColor: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" },
+        flow: "return",
+      };
+    case "rejected":
+      return {
+        title: "Request rejected",
+        badgeText: "Rejected",
+        badgeIcon: "✕",
+        badgeStyle: { backgroundColor: "#f3f4f6", color: "#4b5563", border: "1px solid #e5e7eb" },
+        flow: "return",
+      };
+    case "payment_required":
+      return {
+        title: "Payment required for exchange",
+        badgeText: "Payment required",
+        badgeIcon: "⚠",
+        badgeStyle: { backgroundColor: "#fffbeb", color: "#d97706", border: "1px solid #fde68a" },
+        flow: "return",
+      };
+    case "replacement_sent":
+      return {
+        title: "Replacement order sent",
+        badgeText: "Incoming",
+        badgeIcon: "→",
+        badgeStyle: { backgroundColor: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
+        flow: "return",
+      };
+    case "store_credit_issued":
+      return {
+        title: "Store credit issued",
+        badgeText: "Resolved",
+        badgeIcon: "✓",
+        badgeStyle: { backgroundColor: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" },
+        flow: "return",
+      };
+    case "withdrawal":
+      return {
+        title: "Customer withdrawal request",
+        badgeText: "Withdrawal",
+        badgeIcon: "⤺",
+        badgeStyle: { backgroundColor: "#faf5ff", color: "#7c3aed", border: "1px solid #e9d5ff" },
+        flow: "withdrawal",
+      };
+    default:
+      return {
+        title: event.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        badgeText: event.replaceAll("_", " "),
+        badgeIcon: "•",
+        badgeStyle: { backgroundColor: "#fdf2f4", color: "#de4066", border: "1px solid #fbcfe8" },
+        flow: event.includes("withdrawal") ? "withdrawal" : event.includes("mixed") ? "mixed" : "return",
+      };
+  }
+}
+
+function extractTextPreview(htmlOrText: string): string {
+  if (!htmlOrText) return "No email content added yet.";
+  let clean = htmlOrText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+  clean = clean.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
+  clean = clean.replace(/<br\s*\/?>/gi, " ");
+  clean = clean.replace(/<\/(p|div|tr|td|li|h[1-6])>/gi, " ");
+  clean = clean.replace(/<[^>]*>/g, " ");
+  clean = clean.replace(/&nbsp;/gi, " ");
+  clean = clean.replace(/&amp;/gi, "&");
+  clean = clean.replace(/&lt;/gi, "<");
+  clean = clean.replace(/&gt;/gi, ">");
+  clean = clean.replace(/&quot;/gi, '"');
+  clean = clean.replace(/&#39;/gi, "'");
+  clean = clean.replace(/\s+/g, " ").trim();
+  if (clean.length > 220) {
+    return clean.slice(0, 220) + "...";
+  }
+  return clean || "No email content added yet.";
+}
+
+function generateSampleEmailHtml(body: string, data: any): string {
+  const sampleVars: Record<string, string> = {
+    first_name: "Alex",
+    customer_name: "Alex Morgan",
+    customerName: "Alex Morgan",
+    order_number: "1026",
+    orderNumber: "#1026",
+    request_number: "GLM-1026",
+    requestNumber: "GLM-1026",
+    company_name: data.customization?.storeName || "Grand Le Mar",
+    support_email: data.emailFrom || "support@grandlemar.com",
+    returns_url: data.returnsUrl || "https://grandlemar.com/returns",
+    label_link: "https://grandlemar.com/return-label.pdf",
+    labelLink: "https://grandlemar.com/return-label.pdf",
+    tracking_link: "https://grandlemar.com/tracking/123456",
+    trackingLink: "https://grandlemar.com/tracking/123456",
+    items: "1x Classic Navy Jacket (M), 1x Linen White Shirt (L)",
+    returned_items: "1x Classic Navy Jacket (M), 1x Linen White Shirt (L)",
+    reason: "Size too large",
+    amount: "€149.00",
+    payment_link: "https://grandlemar.com/pay/exchange-1026",
+    days_until_refund: "3-5",
+    current_year: String(new Date().getFullYear()),
+  };
+
+  let rendered = body || "";
+  for (const [key, val] of Object.entries(sampleVars)) {
+    const doubleRegex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi");
+    const singleRegex = new RegExp(`\\{\\s*${key}\\s*\\}`, "gi");
+    rendered = rendered.replace(doubleRegex, val).replace(singleRegex, val);
+  }
+
+  return wrapEmailHtml(rendered, data.customization?.storeName || "Grand Le Mar");
+}
+
 export default function EmailTemplatesPage() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
   const templateActionRef = useRef<HTMLInputElement>(null);
   const logoFileInputRef = useRef<HTMLInputElement>(null);
   const primaryColorInputRef = useRef<HTMLInputElement>(null);
@@ -310,6 +602,21 @@ export default function EmailTemplatesPage() {
 
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState("en");
+  const [showKeywordsModal, setShowKeywordsModal] = useState(false);
+  const [copiedTag, setCopiedTag] = useState<string | null>(null);
+  const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
+  const isSavingNewTemplate = navigation.state === "submitting"
+    && navigation.formData?.get("_action") === "save_template"
+    && !navigation.formData?.get("id");
+  const [previewModalTemplate, setPreviewModalTemplate] = useState<{ id?: string; subject: string; body: string; event?: string } | null>(null);
+
+  useEffect(() => {
+    if (actionData?.message === "Template saved") {
+      setEditingId(null);
+      setIsCreatingTemplate(false);
+    }
+  }, [actionData]);
   const editingTemplate = data.templates.find((t: any) => t.id === editingId) ?? null;
 
   // Live preview of the template being created/edited, inside the shared header and footer.
@@ -463,6 +770,11 @@ export default function EmailTemplatesPage() {
     const timeout = window.setTimeout(() => setIsPaletteSaved(false), 3000);
     return () => window.clearTimeout(timeout);
   }, [paletteFetcher.data, paletteFetcher.state]);
+
+  const filteredTemplates = data.templates.filter((t: any) => {
+    if (selectedLanguage && t.language !== selectedLanguage) return false;
+    return true;
+  });
 
   return (
     <SettingsLayout activeTab={section}>
@@ -1259,36 +1571,74 @@ export default function EmailTemplatesPage() {
                   Use <code>{"{{returnsUrl}}"}</code> to link to your storefront returns page (<code>{data.returnsUrl}</code>).
                 </p>
               </div>
-              <button
-                type="button"
-                className="returbo-btn-primary"
-                onClick={() => setMode("create")}
-              >
-                Add template
-              </button>
             </div>
 
-            <Form method="post" style={{ display: "flex", alignItems: "end", gap: 12, marginBottom: 20 }}>
-              <input type="hidden" name="_action" value="save_sender_email" />
-              <div style={{ flex: "1 1 320px", maxWidth: 480 }}>
-                <label htmlFor="company-sender-email" style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 500 }}>
-                  Company sender email <span aria-hidden="true">*</span>
-                </label>
-                <input
-                  id="company-sender-email"
-                  type="email"
-                  name="emailFrom"
-                  autoComplete="email"
-                  required
-                  defaultValue={data.emailFrom}
-                  className="returbo-detail-input"
-                  style={{ boxSizing: "border-box", width: "100%" }}
-                />
+            {/* Controls row: Language dropdown on left, Useful keywords + Add template on right */}
+            <div className="returbo-email-controls-row">
+              <div className="returbo-email-lang-select-wrap">
+                <span style={{ fontSize: 16 }}>🇺🇸</span>
+                <select
+                  value={selectedLanguage}
+                  onChange={(e) => setSelectedLanguage(e.target.value)}
+                  className="returbo-email-lang-select"
+                  aria-label="Select notification email language"
+                >
+                  <option value="en">English (US)</option>
+                  <option value="sv">Svenska (Swedish)</option>
+                  <option value="de">Deutsch (German)</option>
+                  <option value="fr">Français (French)</option>
+                  <option value="es">Español (Spanish)</option>
+                </select>
+                <span className="returbo-email-lang-arrow">▼</span>
               </div>
-              <button type="submit" className="returbo-btn-primary">Save sender email</button>
+
+              <div className="returbo-email-top-actions">
+                <button
+                  type="button"
+                  className="returbo-keywords-btn"
+                  onClick={() => setShowKeywordsModal(true)}
+                  title="View available email keywords and tags"
+                >
+                  <span style={{ fontWeight: 600, fontFamily: "monospace" }}>{"{ }"}</span>
+                  <span>Useful keywords</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="returbo-add-template-btn"
+                  onClick={() => setIsCreatingTemplate(true)}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  <span>Add template</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Sender email configuration bar */}
+            <Form method="post" className="returbo-email-sender-bar">
+              <input type="hidden" name="_action" value="save_sender_email" />
+              <label htmlFor="company-sender-email" className="returbo-email-sender-label">
+                Company sender email <span style={{ color: "#ef4444" }}>*</span>
+              </label>
+              <input
+                id="company-sender-email"
+                type="email"
+                name="emailFrom"
+                autoComplete="email"
+                required
+                defaultValue={data.emailFrom}
+                placeholder="e.g. support@yourbrand.com"
+                className="returbo-email-sender-input"
+              />
+              <button type="submit" className="returbo-email-sender-save-btn">
+                Save sender email
+              </button>
               {actionData?.message === "Company sender email saved" && (
-                <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#15803d", fontSize: 13, fontWeight: 600 }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#15803d", fontSize: 12.5, fontWeight: 600 }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                   Saved
@@ -1296,38 +1646,401 @@ export default function EmailTemplatesPage() {
               )}
             </Form>
 
+            {/* Flow Tab */}
+            <div className="returbo-email-flow-tabs">
+              <button
+                type="button"
+                className="returbo-email-flow-tab active"
+              >
+                Return flow
+              </button>
+            </div>
+
+            {/* Creation Form (if user clicked Add template) */}
+            {isCreatingTemplate && (
+              <div className="returbo-email-card" style={{ marginBottom: 28, borderColor: "#de4066", boxShadow: "0 0 0 1px #de4066" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#111827" }}>New Email Template</h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingTemplate(false);
+                    }}
+                    style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 18 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <Form method="post">
+                  <input type="hidden" name="_action" value="save_template" />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                    <div>
+                      <label className="returbo-email-field-label">Event</label>
+                      <select
+                        name="event"
+                        className="returbo-detail-input"
+                        style={{ width: "100%", height: 38, background: "#ffffff" }}
+                      >
+                        {EVENT_OPTIONS.map((e) => (
+                          <option key={e} value={e}>
+                            {e.replaceAll("_", " ")}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="returbo-email-field-label">Language</label>
+                      <select
+                        name="language"
+                        defaultValue={selectedLanguage}
+                        className="returbo-detail-input"
+                        style={{ width: "100%", height: 38, background: "#ffffff" }}
+                      >
+                        <option value="en">English (US)</option>
+                        <option value="sv">Svenska (Swedish)</option>
+                        <option value="de">Deutsch (German)</option>
+                        <option value="fr">Français (French)</option>
+                        <option value="es">Español (Spanish)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="returbo-email-field-group">
+                    <label className="returbo-email-field-label">Email title</label>
+                    <input
+                      type="text"
+                      name="subject"
+                      required
+                      placeholder="e.g. Thank you for your return request!"
+                      className="returbo-email-title-input"
+                    />
+                  </div>
+
+                  <div className="returbo-email-field-group" style={{ marginTop: 16 }}>
+                    <label className="returbo-email-field-label">Content</label>
+                    <RichTextEditor name="body" initial="Hi {first_name},\n\nThank you for reaching out..." />
+                  </div>
+
+                  {actionData && "intent" in actionData && actionData.intent === "save_template" && !actionData.ok && (
+                    <p role="alert" style={{ margin: "12px 0 0", color: "#b42318", fontSize: 13 }}>
+                      {actionData.message}
+                    </p>
+                  )}
+
+                  <div className="returbo-email-edit-actions">
+                    <button type="submit" className="returbo-email-save-btn" disabled={isSavingNewTemplate} aria-busy={isSavingNewTemplate}>
+                      {isSavingNewTemplate ? "Creating..." : "Create template"}
+                    </button>
+                    <button
+                      type="button"
+                      className="returbo-email-cancel-btn"
+                      onClick={() => setIsCreatingTemplate(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </Form>
+              </div>
+            )}
+
+            {/* Template Items */}
             {data.templates.length === 0 ? (
               <p className="returbo-empty-state">No notification emails yet. Add a template to start communicating with customers.</p>
+            ) : filteredTemplates.length === 0 ? (
+              <div style={{ padding: "32px 20px", textAlign: "center", border: "1px dashed #d1d5db", borderRadius: 8, background: "#fafafa" }}>
+                <p style={{ margin: "0 0 12px 0", fontSize: 13.5, color: "#6b7280" }}>
+                  No notification emails configured for this language.
+                </p>
+                <button
+                  type="button"
+                  className="returbo-btn-primary"
+                  onClick={() => setIsCreatingTemplate(true)}
+                >
+                  Add template
+                </button>
+              </div>
             ) : (
-              <div className="returbo-email-template-list">
-                {data.templates.map((t: any) => (
-                  <article key={t.id} className="returbo-email-template-card">
-                    <div className="returbo-email-template-heading">
-                      <div>
-                        <div className="returbo-email-template-meta">
-                          <span className="returbo-badge returbo-badge-pink">{t.language.toUpperCase()}</span>
-                          <span>{t.event.replaceAll("_", " ")}</span>
-                        </div>
-                        <h3>{t.subject}</h3>
+              <div className="returbo-email-templates-wrap">
+                {filteredTemplates.map((t: any) => {
+                  const info = getEventDisplayInfo(t.event);
+                  const isEditingThis = editingId === t.id;
+
+                  return (
+                    <div key={t.id} className="returbo-email-template-item">
+                      {/* Header line above card */}
+                      <div className="returbo-email-template-header">
+                        <span className="returbo-email-template-title">{info.title}</span>
+                        <span className="returbo-email-status-badge" style={info.badgeStyle}>
+                          <span>{info.badgeIcon}</span>
+                          <span>{info.badgeText}</span>
+                        </span>
                       </div>
-                      <div className="returbo-template-actions">
-                        <button
-                          type="button"
-                          className="returbo-btn-secondary"
-                          onClick={() => { setEditingId(t.id); setMode("edit"); }}
-                        >
-                          Edit
-                        </button>
-                        <Form method="post">
-                          <input type="hidden" name="_action" value="delete_template" />
-                          <input type="hidden" name="id" value={t.id} />
-                          <button type="submit" className="returbo-btn-danger">Delete</button>
-                        </Form>
+
+                      {/* The Card */}
+                      <div className="returbo-email-card">
+                        {isEditingThis ? (
+                          /* INLINE EDIT MODE matching media_1795578374533_2f3f9d20.png */
+                          <Form method="post">
+                            <input ref={templateActionRef} type="hidden" name="_action" defaultValue="save_template" />
+                            <input type="hidden" name="id" value={t.id} />
+                            <input type="hidden" name="event" value={t.event} />
+                            <input type="hidden" name="language" value={t.language} />
+
+                            <div className="returbo-email-field-group">
+                              <label className="returbo-email-field-label">Email title</label>
+                              <input
+                                type="text"
+                                name="subject"
+                                defaultValue={t.subject}
+                                required
+                                className="returbo-email-title-input"
+                              />
+                            </div>
+
+                            <div className="returbo-email-field-group" style={{ marginTop: 16 }}>
+                              <label className="returbo-email-field-label">Content</label>
+                              <RichTextEditor name="body" initial={t.body} />
+                            </div>
+
+                            <div className="returbo-email-edit-actions">
+                              <button
+                                type="submit"
+                                className="returbo-email-save-btn"
+                                onClick={() => {
+                                  if (templateActionRef.current) templateActionRef.current.value = "save_template";
+                                }}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                className="returbo-email-preview-btn"
+                                onClick={() => setPreviewModalTemplate(t)}
+                                style={{ height: 36, padding: "0 14px" }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                                <span>Preview</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="returbo-email-cancel-btn"
+                                onClick={() => setEditingId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+
+                            {/* Collapsible Test Delivery and Delete */}
+                            <details open style={{ marginTop: 20, paddingTop: 14, borderTop: "1px solid #f3f4f6" }}>
+                              <summary style={{ fontSize: 12.5, fontWeight: 600, color: "#6b7280", cursor: "pointer", userSelect: "none" }}>
+                                Test email delivery & options
+                              </summary>
+                              <div style={{ marginTop: 14, display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", justifyContent: "space-between" }}>
+                                <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flex: "1 1 320px", maxWidth: 440 }}>
+                                  <div style={{ flex: 1 }}>
+                                    <label htmlFor={`test-email-${t.id}`} style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                                      Test email address
+                                    </label>
+                                    <input
+                                      id={`test-email-${t.id}`}
+                                      type="email"
+                                      name="testEmail"
+                                      placeholder="e.g. yourname@example.com"
+                                      className="returbo-email-title-input"
+                                      style={{ height: 34, fontSize: 12.5 }}
+                                    />
+                                  </div>
+                                  <button
+                                    type="submit"
+                                    className="returbo-email-sender-save-btn"
+                                    style={{ height: 34 }}
+                                    onClick={() => {
+                                      if (templateActionRef.current) templateActionRef.current.value = "test_send";
+                                    }}
+                                  >
+                                    Test send
+                                  </button>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (window.confirm("Are you sure you want to delete this template?")) {
+                                      const form = document.createElement("form");
+                                      form.method = "post";
+                                      const act = document.createElement("input");
+                                      act.type = "hidden";
+                                      act.name = "_action";
+                                      act.value = "delete_template";
+                                      form.appendChild(act);
+                                      const idInput = document.createElement("input");
+                                      idInput.type = "hidden";
+                                      idInput.name = "id";
+                                      idInput.value = t.id;
+                                      form.appendChild(idInput);
+                                      document.body.appendChild(form);
+                                      form.submit();
+                                    }
+                                  }}
+                                  style={{ background: "none", border: "none", color: "#dc2626", fontSize: 12.5, fontWeight: 500, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, padding: "8px 0" }}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="3 6 5 6 21 6" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  </svg>
+                                  Delete template
+                                </button>
+                              </div>
+                            </details>
+                          </Form>
+                        ) : (
+                          /* PREVIEW MODE matching media_1795578354940_b1607809.jpg & media_1795578360118_22a587f5.png */
+                          <>
+                            {/* Top right Actions: Preview & Edit */}
+                            <div className="returbo-email-card-actions">
+                              <button
+                                type="button"
+                                className="returbo-email-preview-btn"
+                                onClick={() => setPreviewModalTemplate(t)}
+                                title="Preview email"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                                <span>Preview</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                className="returbo-email-edit-btn"
+                                onClick={() => setEditingId(t.id)}
+                                title="Edit template"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M12 20h9" />
+                                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                </svg>
+                                <span>Edit</span>
+                              </button>
+                            </div>
+
+                            <div className="returbo-email-field-label">Email title</div>
+                            <div className="returbo-email-field-title">{t.subject}</div>
+
+                            <div className="returbo-email-field-label">Content</div>
+                            <div className="returbo-email-field-content">
+                              {extractTextPreview(t.body)}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
-                    <p className="returbo-email-template-preview">{t.body.replace(/<[^>]*>/g, " ").trim() || "No email content added yet."}</p>
-                  </article>
-                ))}
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Useful Keywords Modal */}
+            {showKeywordsModal && (
+              <div
+                className="returbo-keywords-modal-overlay"
+                onClick={() => setShowKeywordsModal(false)}
+              >
+                <div
+                  className="returbo-keywords-modal"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="returbo-keywords-modal-header">
+                    <h3 className="returbo-keywords-modal-title">Useful Keywords</h3>
+                    <button
+                      type="button"
+                      className="returbo-keywords-modal-close"
+                      onClick={() => setShowKeywordsModal(false)}
+                      title="Close modal"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="returbo-keywords-modal-body">
+                    <p style={{ margin: "0 0 14px 0", fontSize: 13, color: "#6b7280" }}>
+                      You can paste these dynamic keyword placeholders into your email title or content. They will be automatically replaced with the customer's actual order data when the email is sent.
+                    </p>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {USEFUL_KEYWORDS.map((k) => {
+                        const isCopied = copiedTag === k.tag;
+                        return (
+                          <div key={k.tag} className="returbo-keyword-row">
+                            <span className="returbo-keyword-tag">{k.tag}</span>
+                            <span className="returbo-keyword-desc">{k.desc}</span>
+                            <button
+                              type="button"
+                              className="returbo-keyword-copy-btn"
+                              onClick={() => {
+                                navigator.clipboard.writeText(k.tag);
+                                setCopiedTag(k.tag);
+                                setTimeout(() => setCopiedTag(null), 2000);
+                              }}
+                            >
+                              {isCopied ? "✓ Copied" : "Copy"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Email Preview Modal with proper height and width */}
+            {previewModalTemplate && (
+              <div
+                className="returbo-email-modal-overlay"
+                onClick={() => setPreviewModalTemplate(null)}
+              >
+                <div
+                  className="returbo-email-modal"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="returbo-email-modal-header">
+                    <div className="returbo-email-modal-header-info">
+                      <h3 className="returbo-email-modal-subject">
+                        {previewModalTemplate.subject || "Email Preview"}
+                      </h3>
+                      <div className="returbo-email-modal-meta">
+                        <span><strong>From:</strong> {data.customization?.storeName || "Grand Le Mar"} &lt;{data.emailFrom || "support@grandlemar.com"}&gt;</span>
+                        <span><strong>To:</strong> Customer &lt;alex.morgan@example.com&gt;</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="returbo-email-modal-close"
+                      onClick={() => setPreviewModalTemplate(null)}
+                      title="Close email preview"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="returbo-email-modal-body">
+                    <div className="returbo-email-modal-frame-wrap">
+                      <iframe
+                        title="Email Preview"
+                        srcDoc={generateSampleEmailHtml(previewModalTemplate.body, data)}
+                        className="returbo-email-modal-iframe"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </section>

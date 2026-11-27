@@ -38,6 +38,15 @@ export function isExpired(deadline: Date, now: Date = new Date()): boolean {
   return now.getTime() > deadline.getTime();
 }
 
+function normalizeShopifyId(id: string): string {
+  const trimmed = id.trim();
+  return trimmed.startsWith("gid://") ? trimmed.slice(trimmed.lastIndexOf("/") + 1) : trimmed;
+}
+
+function sameShopifyId(left: string | undefined, right: string): boolean {
+  return left !== undefined && normalizeShopifyId(left) === normalizeShopifyId(right);
+}
+
 export async function isItemExcluded(
   shop: string,
   ctx: { productId?: string; variantId?: string; collectionIds?: string[] },
@@ -47,9 +56,9 @@ export async function isItemExcluded(
   const rules = await prisma.exclusionRule.findMany({ where: { shop } });
   for (const rule of rules) {
     if (!rule[appliesField as keyof typeof rule]) continue;
-    if (rule.targetType === "collection" && ctx.collectionIds?.includes(rule.targetId)) return true;
-    if (rule.targetType === "product" && ctx.productId === rule.targetId) return true;
-    if (rule.targetType === "variant" && ctx.variantId === rule.targetId) return true;
+    if (rule.targetType === "collection" && ctx.collectionIds?.some((id) => sameShopifyId(id, rule.targetId))) return true;
+    if (rule.targetType === "product" && sameShopifyId(ctx.productId, rule.targetId)) return true;
+    if (rule.targetType === "variant" && sameShopifyId(ctx.variantId, rule.targetId)) return true;
   }
   return false;
 }

@@ -876,6 +876,634 @@ s-button[variant="secondary"]::part(button) {
 .returbo-policy-preview a { color: var(--returbo-pink); font-size: 13px; text-decoration: none; }
 
 .returbo-empty-state { margin: 0; padding: 18px; color: var(--returbo-text-muted); font-size: 14px; background: #fafafa; border: 1px dashed #d8dde4; border-radius: 7px; }
+
+/* Customer Notification Emails Customization */
+.returbo-email-customization-section {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 28px 32px;
+  margin-bottom: 28px;
+}
+
+.returbo-email-header-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 6px 0;
+}
+
+.returbo-email-header-subtitle {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.returbo-email-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 20px 0 16px 0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.returbo-email-lang-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.returbo-email-lang-select-wrap:hover {
+  border-color: #cbd5e1;
+}
+
+.returbo-email-lang-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+  cursor: pointer;
+  outline: none;
+  padding-right: 18px;
+  font-family: inherit;
+}
+
+.returbo-email-lang-arrow {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+}
+
+.returbo-email-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.returbo-keywords-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-keywords-btn:hover {
+  background: #f9fafb;
+  border-color: #cbd5e1;
+  color: #111827;
+}
+
+.returbo-add-template-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  background: #de4066;
+  border: 1px solid #de4066;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-add-template-btn:hover {
+  background: #c93558;
+}
+
+/* Sender Email Bar */
+.returbo-email-sender-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.returbo-email-sender-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.returbo-email-sender-input {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #111827;
+  min-width: 240px;
+  flex: 1 1 auto;
+  max-width: 380px;
+  box-sizing: border-box;
+}
+
+.returbo-email-sender-input:focus {
+  outline: none;
+  border-color: #de4066;
+  box-shadow: 0 0 0 1px #de4066;
+}
+
+.returbo-email-sender-save-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-email-sender-save-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* Flow Tabs */
+.returbo-email-flow-tabs {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 24px;
+}
+
+.returbo-email-flow-tab {
+  background: none;
+  border: none;
+  padding: 10px 0 12px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  position: relative;
+  font-family: inherit;
+}
+
+.returbo-email-flow-tab:hover {
+  color: #111827;
+}
+
+.returbo-email-flow-tab.active {
+  color: #111827;
+  font-weight: 700;
+}
+
+.returbo-email-flow-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: #de4066;
+}
+
+/* Template Item */
+.returbo-email-template-item {
+  margin-bottom: 28px;
+}
+
+.returbo-email-template-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.returbo-email-template-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.returbo-email-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Card */
+.returbo-email-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 22px 24px;
+  position: relative;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.returbo-email-card:hover {
+  border-color: #cbd5e1;
+}
+
+.returbo-email-card-actions {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.returbo-email-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-email-preview-btn:hover {
+  background: #f8fafc;
+  border-color: #9ca3af;
+  color: #111827;
+}
+
+.returbo-email-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #de4066;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  transition: opacity 0.15s ease;
+}
+
+.returbo-email-edit-btn:hover {
+  text-decoration: underline;
+}
+
+.returbo-email-field-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 6px;
+}
+
+.returbo-email-field-title {
+  font-size: 14px;
+  color: #374151;
+  margin-bottom: 18px;
+}
+
+.returbo-email-field-content {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4b5563;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  white-space: normal;
+  font-family: inherit;
+  max-width: 90%;
+}
+
+/* Email Preview Modal */
+.returbo-email-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  padding: 24px;
+}
+
+.returbo-email-modal {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 680px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  animation: returboModalFadeIn 0.2s ease-out;
+}
+
+@keyframes returboModalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.returbo-email-modal-header {
+  padding: 16px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.returbo-email-modal-header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.returbo-email-modal-subject {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 6px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.returbo-email-modal-meta {
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.returbo-email-modal-close {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.returbo-email-modal-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #94a3b8;
+}
+
+.returbo-email-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #f1f5f9;
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  min-height: 480px;
+}
+
+.returbo-email-modal-frame-wrap {
+  width: 100%;
+  max-width: 600px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+  height: 520px;
+}
+
+.returbo-email-modal-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+.returbo-email-title-input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: #111827;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.returbo-email-title-input:focus {
+  outline: none;
+  border-color: #de4066;
+  box-shadow: 0 0 0 1px #de4066;
+}
+
+.returbo-email-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.returbo-email-save-btn {
+  background-color: #de4066;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 24px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.returbo-email-save-btn:hover {
+  background-color: #c93558;
+}
+
+.returbo-email-cancel-btn {
+  background: none;
+  border: none;
+  color: #de4066;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 10px;
+}
+
+.returbo-email-cancel-btn:hover {
+  text-decoration: underline;
+}
+
+/* Keywords popover / modal */
+.returbo-keywords-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+
+.returbo-keywords-modal {
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  max-width: 560px;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+}
+
+.returbo-keywords-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+
+.returbo-keywords-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.returbo-keywords-modal-close {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.returbo-keywords-modal-close:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.returbo-keywords-modal-body {
+  padding: 16px 20px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.returbo-keyword-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease;
+}
+
+.returbo-keyword-row:hover {
+  background-color: #f3f4f6;
+}
+
+.returbo-keyword-tag {
+  font-family: monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #de4066;
+  background: #fdf2f4;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #fbcfe8;
+}
+
+.returbo-keyword-desc {
+  font-size: 12.5px;
+  color: #6b7280;
+}
+
+.returbo-keyword-copy-btn {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.returbo-keyword-copy-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+/* Legacy compatibility classes */
 .returbo-email-template-list { display: grid; gap: 14px; }
 .returbo-email-template-card { padding: 18px; border: 1px solid var(--returbo-border); border-radius: 8px; background: #fff; }
 .returbo-email-template-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
@@ -1367,6 +1995,26 @@ s-button[variant="secondary"]::part(button) {
 .returbo-view-link:hover {
   color: #de4066;
   text-decoration: underline;
+}
+
+.returbo-inline-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.returbo-inline-loading::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: returbo-view-spin 0.8s linear infinite;
+}
+
+@keyframes returbo-view-spin {
+  to { transform: rotate(360deg); }
 }
 
 .returbo-tracking-pill {
