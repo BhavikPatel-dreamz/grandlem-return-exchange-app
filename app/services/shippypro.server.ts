@@ -453,45 +453,65 @@ async function claimLabelSlot(returnRequestId: string): Promise<{ ok: true } | {
   return { ok: false, error: blockedLabelMessage(current?.status ?? existing.status, null) };
 }
 
-export async function createReturnLabel(returnRequestId: string): Promise<CreateLabelResult> {
-  const rr = await prisma.returnRequest.findUnique({
+type LabelRouting = { carrierId: string | null; service: string | null; flagged: boolean };
+type ReturnRequestForLabel = NonNullable<Awaited<ReturnType<typeof loadRequestForLabel>>>;
+
+function loadRequestForLabel(returnRequestId: string) {
+  return prisma.returnRequest.findUnique({
     where: { id: returnRequestId },
     include: { items: true, label: true },
   });
-  if (!rr) return { ok: false, error: "Return request not found" };
+}
 
-  const blocked = liveLabelBlockedReason(rr.shop);
-  if (blocked) return { ok: false, error: blocked };
+export type ReturnShipmentDraft = {
+  ok: true;
+  params: Record<string, any>;
+  customs: unknown[];
+  routing: LabelRouting;
+  carrierRecordId: string | null;
+  // Fields that are empty but may be required by some carriers.
+  warnings: string[];
+};
+export type ReturnShipmentProblem = {
+  ok: false;
+  error: string;
+  routing: LabelRouting | null;
+  carrierRecordId: string | null;
+};
 
-  const claim = await claimLabelSlot(rr.id);
-  if (!claim.ok) {
-    const current = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
-    return { ok: false, error: current ? blockedLabelMessage(current.status, rr.orderNumber) : claim.error };
-  }
+const REQUIRED_ADDRESS_FIELDS: [string, string][] = [
+  ["name", "name"],
+  ["street1", "street address"],
+  ["city", "city"],
+  ["zip", "postal code"],
+  ["country", "country"],
+];
 
-  let routing: { carrierId: string | null; service: string | null; flagged: boolean } | null = null;
-  let carrierRecordId: string | null = null;
-  const finish = async (status: string, error: string): Promise<CreateLabelResult> => {
-    console.error(`[ShippyPro] Label ${status} for request ${rr.id}: ${error}`);
-    await prisma.returnLabel.update({
-      where: { returnRequestId: rr.id },
-      data: {
-        status,
-        carrierId: carrierRecordId,
-        connectionId: routing?.carrierId ?? null,
-        service: routing?.service ?? null,
-      },
-    }).catch(() => null);
-    if (routing?.flagged) {
-      await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } }).catch(() => null);
+/** Lists missing mandatory fields (errors) and empty optional-but-risky fields (warnings). */
+export function validateReturnShipment(params: Record<string, any>): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const sides: [string, string][] = [["from_address", "Customer (pickup)"], ["to_address", "Return warehouse"]];
+  for (const [key, label] of sides) {
+    const address = params[key] ?? {};
+    for (const [field, fieldLabel] of REQUIRED_ADDRESS_FIELDS) {
+      if (!String(address[field] ?? "").trim()) errors.push(`${label} ${fieldLabel} is missing`);
     }
-    await notifyLabelFailure(rr.shop, rr.orderNumber, error);
-    return { ok: false, error };
-  };
+    if (!String(address.phone ?? "").trim()) warnings.push(`${label} phone is empty (some carriers require it)`);
+  }
+  if (!params.CarrierID) errors.push("Carrier is missing");
+  const parcels = Array.isArray(params.parcels) ? params.parcels : [];
+  if (parcels.length === 0 || parcels.some((p: any) => !(Number(p.weight) > 0))) errors.push("Parcel weight is missing");
+  return { errors, warnings };
+}
 
-  // 1. Build the shipment. Any error here happens before ShippyPro is called.
-  let params: Record<string, unknown>;
-  let customs: unknown[];
+/**
+ * Builds the ShippyPro Ship parameters for a return without calling Ship.
+ * Used for the label itself and for the admin preview.
+ */
+export async function buildReturnShipment(rr: ReturnRequestForLabel): Promise<ReturnShipmentDraft | ReturnShipmentProblem> {
+  let routing: LabelRouting | null = null;
+  let carrierRecordId: string | null = null;
   try {
     const settings = await getOrCreateSettings(rr.shop);
     const original = await findOriginalShipment(
@@ -554,9 +574,8 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
     if (isSweden && !currencyCode) {
       throw new Error("Order currency is unavailable for the customs declaration.");
     }
-    customs = customsItems;
 
-    params = {
+    const params = {
       CarrierID: carrierId,
       CarrierName: carrierName,
       CarrierService: routing.service || carrier?.service || undefined,
@@ -601,9 +620,74 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
         })),
       } : {}),
     };
+
+    const { errors, warnings } = validateReturnShipment(params);
+    if (errors.length > 0) {
+      throw new Error(`Shipment details incomplete: ${errors.join("; ")}`);
+    }
+    return { ok: true, params, customs: customsItems, routing, carrierRecordId, warnings };
   } catch (e) {
-    return finish("failed", e instanceof Error ? e.message : "Unknown error");
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error", routing, carrierRecordId };
   }
+}
+
+/** Admin preview of what would be sent to ShippyPro. Never calls Ship. */
+export async function previewReturnShipment(returnRequestId: string) {
+  const rr = await loadRequestForLabel(returnRequestId);
+  if (!rr) return { ok: false as const, error: "Return request not found" };
+  const draft = await buildReturnShipment(rr);
+  if (!draft.ok) return { ok: false as const, error: draft.error };
+  const { params, warnings } = draft;
+  return {
+    ok: true as const,
+    warnings,
+    carrier: [params.CarrierName, params.CarrierService].filter(Boolean).join(" · "),
+    reference: String(params.TransactionID ?? ""),
+    from: params.from_address as Record<string, string>,
+    to: params.to_address as Record<string, string>,
+    parcels: params.parcels as { weight: number; length: number; width: number; height: number }[],
+  };
+}
+
+export async function createReturnLabel(returnRequestId: string): Promise<CreateLabelResult> {
+  const rr = await loadRequestForLabel(returnRequestId);
+  if (!rr) return { ok: false, error: "Return request not found" };
+
+  const blocked = liveLabelBlockedReason(rr.shop);
+  if (blocked) return { ok: false, error: blocked };
+
+  const claim = await claimLabelSlot(rr.id);
+  if (!claim.ok) {
+    const current = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
+    return { ok: false, error: current ? blockedLabelMessage(current.status, rr.orderNumber) : claim.error };
+  }
+
+  let routing: LabelRouting | null = null;
+  let carrierRecordId: string | null = null;
+  const finish = async (status: string, error: string): Promise<CreateLabelResult> => {
+    console.error(`[ShippyPro] Label ${status} for request ${rr.id}: ${error}`);
+    await prisma.returnLabel.update({
+      where: { returnRequestId: rr.id },
+      data: {
+        status,
+        carrierId: carrierRecordId,
+        connectionId: routing?.carrierId ?? null,
+        service: routing?.service ?? null,
+      },
+    }).catch(() => null);
+    if (routing?.flagged) {
+      await prisma.returnRequest.update({ where: { id: rr.id }, data: { reviewFlagged: true } }).catch(() => null);
+    }
+    await notifyLabelFailure(rr.shop, rr.orderNumber, error);
+    return { ok: false, error };
+  };
+
+  // 1. Build and validate the shipment. Nothing has been sent yet.
+  const draft = await buildReturnShipment(rr);
+  routing = draft.routing;
+  carrierRecordId = draft.carrierRecordId;
+  if (!draft.ok) return finish("failed", draft.error);
+  const { params, customs } = draft;
 
   // 2. Send exactly one Ship call.
   const shipResult = await shippyproCall("Ship", params, rr.shop);
