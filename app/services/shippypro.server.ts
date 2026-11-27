@@ -4,6 +4,7 @@ import { unauthenticated } from "../shopify.server";
 import { getOrCreateSettings, parseJson } from "./settings.server";
 import { decryptSecret, encryptSecret } from "./crypto.server";
 import { sendEmail } from "./email.server";
+import { emailRecipientFor, isTestShop, liveLabelBlockedReason } from "./test-mode.server";
 
 const DEFAULT_SHIPPYPRO_URL = "https://api.shippypro.com/v1";
 const LEGACY_SHIPPYPRO_URL = "https://www.shippypro.com/api";
@@ -33,6 +34,8 @@ export async function resolveShippyProApiKey(shop?: string | null): Promise<stri
       // fall back to env
     }
   }
+  // A test store must use its own saved key, never the shared env key.
+  if (isTestShop(shop)) return "";
   return process.env.SHIPPYPRO_API_KEY || "";
 }
 
@@ -361,8 +364,9 @@ async function notifyLabelFailure(shop: string, orderNumber: string | null, erro
         }
       }
     `);
-    const recipient = process.env.SHIPPYPRO_FAILURE_EMAIL || (await response.json())?.data?.shop?.email;
-    if (!recipient) return;
+    const owner = process.env.SHIPPYPRO_FAILURE_EMAIL || (await response.json())?.data?.shop?.email;
+    if (!owner) return;
+    const recipient = emailRecipientFor(shop, owner);
     const settings = await getOrCreateSettings(shop);
     await sendEmail(
       recipient,
@@ -455,6 +459,9 @@ export async function createReturnLabel(returnRequestId: string): Promise<Create
     include: { items: true, label: true },
   });
   if (!rr) return { ok: false, error: "Return request not found" };
+
+  const blocked = liveLabelBlockedReason(rr.shop);
+  if (blocked) return { ok: false, error: blocked };
 
   const claim = await claimLabelSlot(rr.id);
   if (!claim.ok) {

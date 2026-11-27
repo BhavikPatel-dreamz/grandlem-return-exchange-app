@@ -245,6 +245,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.SHIPPING_TEST_SHOPS;
+  delete process.env.SHIPPING_LIVE_TEST_ENABLED;
+  delete process.env.TEST_EMAIL_RECIPIENT;
   globalThis.fetch = realFetch;
   vi.unstubAllGlobals();
   delete process.env.SHIPPYPRO_API_KEY;
@@ -466,5 +469,54 @@ describe("admin approval", () => {
     expect(retry.ok).toBe(true);
     expect(shipCalls()).toHaveLength(1);
     expect(state.emails.filter((e) => e.event === "approved")).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test-store isolation
+// ---------------------------------------------------------------------------
+
+describe("test store mode", () => {
+  beforeEach(() => {
+    process.env.SHIPPING_TEST_SHOPS = "other-shop.myshopify.com, DEV-TEST.myshopify.com";
+  });
+
+  it("does not call ShippyPro for a test store while live labels are off", async () => {
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("switched off");
+    expect(state.calls).toHaveLength(0);
+    expect(state.returnLabels).toHaveLength(0);
+  });
+
+  it("never uses the shared env key for a test store", async () => {
+    process.env.SHIPPING_LIVE_TEST_ENABLED = "true";
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.ok).toBe(false);
+    expect(shipCalls()).toHaveLength(0);
+  });
+
+  it("uses the test store's own key when live labels are on", async () => {
+    process.env.SHIPPING_LIVE_TEST_ENABLED = "true";
+    const { encryptSecret } = await import("../app/services/crypto.server");
+    state.settings[world.SHOP].shippyproApiKeyEncrypted = encryptSecret("dev-store-key");
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(shipCalls()).toHaveLength(1);
+  });
+
+  it("leaves shops that are not test stores unchanged", async () => {
+    process.env.SHIPPING_TEST_SHOPS = "other-shop.myshopify.com";
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+  });
+
+  it("routes test-store emails to TEST_EMAIL_RECIPIENT", async () => {
+    process.env.TEST_EMAIL_RECIPIENT = "qa@example.com";
+    const { emailRecipientFor } = await import("../app/services/test-mode.server");
+    expect(emailRecipientFor(world.SHOP, "buyer@example.com")).toBe("qa@example.com");
+    expect(emailRecipientFor("live-store.myshopify.com", "buyer@example.com")).toBe("buyer@example.com");
   });
 });
