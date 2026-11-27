@@ -424,7 +424,7 @@ describe("createReturnLabel", () => {
     state.shippypro.Ship = () => ({ Result: "OK" });
     const { createReturnLabel } = await import("../app/services/shippypro.server");
     const result = await createReturnLabel("rr_1");
-    expect(result.error).toContain("unknown result");
+    expect(result.error).toContain('ShippyPro\'s reply: {"Result":"OK"}');
     expect(state.returnLabels[0]).toMatchObject({ status: "unknown", shippyproOrderId: null });
   });
 
