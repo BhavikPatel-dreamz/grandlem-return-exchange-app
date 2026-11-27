@@ -48,6 +48,19 @@ function deadlineDisplay(days: number) {
   return { amount: days, unit: "days" };
 }
 
+type ReturnMethod = {
+  carrierId?: string;
+  service?: string;
+  // Fallback parcel when the original outbound shipment cannot be found.
+  parcel?: { weight: number; length: number; width: number; height: number };
+};
+
+function parseParcel(formData: FormData, market: string): ReturnMethod["parcel"] | null {
+  const read = (field: string) => Number(String(formData.get(`parcel${field}_${market}`) || "").replace(",", "."));
+  const parcel = { weight: read("Weight"), length: read("Length"), width: read("Width"), height: read("Height") };
+  return Object.values(parcel).every((v) => Number.isFinite(v) && v > 0) ? parcel : null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -72,7 +85,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       claimMinPhotos: settings.claimMinPhotos,
       claimMinCommentLength: settings.claimMinCommentLength,
       labelTimingPerMarket: parseJson<Record<string, string>>(settings.labelTimingPerMarket, {}),
-      defaultReturnMethodPerMarket: parseJson<Record<string, { carrierId?: string; service?: string }>>(settings.defaultReturnMethodPerMarket, {}),
+      defaultReturnMethodPerMarket: parseJson<Record<string, ReturnMethod>>(settings.defaultReturnMethodPerMarket, {}),
       warehouseAddressesPerMarket: parseJson<Record<string, Record<string, string>>>(settings.warehouseAddressesPerMarket, {}),
     },
     reasons,
@@ -118,7 +131,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "save_routing_settings") {
       const current = await getOrCreateSettings(shop);
       const timings = parseJson<Record<string, string>>(current.labelTimingPerMarket, {});
-      const methods = parseJson<Record<string, { carrierId?: string; service?: string }>>(current.defaultReturnMethodPerMarket, {});
+      const methods = parseJson<Record<string, ReturnMethod>>(current.defaultReturnMethodPerMarket, {});
       const warehouses = parseJson<Record<string, Record<string, string>>>(current.warehouseAddressesPerMarket, {});
 
       for (const market of ROUTING_MARKETS) {
@@ -126,15 +139,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           ? "immediate"
           : "after_approval";
 
-        const method = {
+        const parcel = parseParcel(formData, market);
+        const method: ReturnMethod = {
           carrierId: String(formData.get(`carrierId_${market}`) || "").trim(),
           service: String(formData.get(`service_${market}`) || "").trim(),
+          ...(parcel ? { parcel } : {}),
         };
-        if (method.carrierId || method.service) methods[market] = method;
+        if (method.carrierId || method.service || method.parcel) methods[market] = method;
         else delete methods[market];
 
         const address = Object.fromEntries(
-          ["name", "company", "address1", "address2", "city", "zip", "country"].map((field) => [
+          ["name", "company", "address1", "address2", "city", "zip", "country", "phone"].map((field) => [
             field,
             String(formData.get(`${field}_${market}`) || "").trim(),
           ]),
@@ -1451,6 +1466,50 @@ export function SettingsView() {
                             style={{ width: "100%", height: 38 }}
                           />
                         </div>
+                        <div>
+                          <label htmlFor={`phone_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                            Phone
+                          </label>
+                          <input
+                            id={`phone_${market}`}
+                            type="tel"
+                            name={`phone_${market}`}
+                            defaultValue={address.phone || ""}
+                            placeholder="e.g. +46 8 123 456"
+                            className="returbo-detail-input"
+                            style={{ width: "100%", height: 38 }}
+                          />
+                        </div>
+                      </div>
+                      <p style={{ margin: "16px 0 6px", fontSize: 12.5, fontWeight: 600, color: "#374151" }}>
+                        Fallback parcel
+                      </p>
+                      <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "#64748b" }}>
+                        Return labels reuse the parcel size of the original shipment. These values are used only when that shipment cannot be found in ShippyPro.
+                      </p>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 14 }}>
+                        {([
+                          ["Weight", "Weight (kg)", method.parcel?.weight],
+                          ["Length", "Length (cm)", method.parcel?.length],
+                          ["Width", "Width (cm)", method.parcel?.width],
+                          ["Height", "Height (cm)", method.parcel?.height],
+                        ] as const).map(([field, label, value]) => (
+                          <div key={field}>
+                            <label htmlFor={`parcel${field}_${market}`} style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                              {label}
+                            </label>
+                            <input
+                              id={`parcel${field}_${market}`}
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              name={`parcel${field}_${market}`}
+                              defaultValue={value ?? ""}
+                              className="returbo-detail-input"
+                              style={{ width: "100%", height: 38 }}
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>

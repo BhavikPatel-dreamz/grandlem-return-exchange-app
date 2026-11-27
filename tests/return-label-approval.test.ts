@@ -439,6 +439,58 @@ describe("shipment pre-flight", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Mirror the original outbound shipment
+// ---------------------------------------------------------------------------
+
+describe("return label mirrors the original shipment", () => {
+  const original = {
+    TransactionID: "#1001",
+    CarrierID: 501,
+    CarrierName: "UPS",
+    Service: "Ground",
+    FromAddress: { Name: "Grand Le Mar WH", Address1: "5 Harbor Way", City: "Newark", ZIP: "07114", Country: "US", Phone: "+19730000" },
+    ToAddress: { Name: "Buyer At Home", Address1: "22 Elm St", City: "Boston", ZIP: "02101", Country: "US" },
+    Parcels: [{ Weight: 2.5, Length: 40, Width: 30, Height: 12 }],
+  };
+
+  it("swaps the original addresses and reuses its parcel", async () => {
+    state.shippypro.GetShipmentsReport = () => ({ Shipments: [original] });
+    const { previewReturnShipment } = await import("../app/services/shippypro.server");
+    const preview = await previewReturnShipment("rr_1");
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.to).toMatchObject({ name: "Grand Le Mar WH", street1: "5 Harbor Way", zip: "07114", country: "US" });
+    expect(preview.from).toMatchObject({ name: "Buyer At Home", street1: "22 Elm St", zip: "02101" });
+    // Phone missing on the original recipient is filled from the Shopify order.
+    expect(preview.from.phone).toBe("+15555550100");
+    expect(preview.parcels).toEqual([{ weight: 2.5, length: 40, width: 30, height: 12 }]);
+  });
+
+  it("uses the Settings return address and fallback parcel when no original shipment is found", async () => {
+    state.settings[world.SHOP].warehouseAddressesPerMarket = JSON.stringify({
+      US: { name: "US Returns", address1: "1 Return Ln", city: "Austin", zip: "73301", country: "US", phone: "+1512000" },
+    });
+    state.settings[world.SHOP].defaultReturnMethodPerMarket = JSON.stringify({
+      US: { carrierId: "501", service: "Ground", parcel: { weight: 1.2, length: 35, width: 25, height: 8 } },
+    });
+    const { previewReturnShipment } = await import("../app/services/shippypro.server");
+    const preview = await previewReturnShipment("rr_1");
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.to).toMatchObject({ name: "US Returns", street1: "1 Return Ln" });
+    expect(preview.from).toMatchObject({ name: "Test Buyer", street1: "1 Main St" });
+    expect(preview.parcels).toEqual([{ weight: 1.2, length: 35, width: 25, height: 8 }]);
+  });
+
+  it("flags the request for review when the parcel had to be guessed", async () => {
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    await createReturnLabel("rr_1");
+    expect(shipCalls()[0].params.parcels).toEqual([{ weight: 1, length: 10, width: 10, height: 10 }]);
+    expect(state.returnRequests[0].reviewFlagged).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Admin approval
 // ---------------------------------------------------------------------------
 
