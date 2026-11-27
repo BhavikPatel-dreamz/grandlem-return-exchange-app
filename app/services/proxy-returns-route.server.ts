@@ -1747,7 +1747,8 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
   if (!customerEmail) {
     console.warn("[Return Portal] No customer email found on order, skipping confirmation email");
   } else {
-    await sendEventEmail(ctx.shop, settings.autoApproveRequests ? "approved" : "received", ctx.lang, customerEmail, {
+    const approvedEvent = token.requestType === "exchange" ? "exchange_approved" : "approved";
+    const sent = await sendEventEmail(ctx.shop, settings.autoApproveRequests ? approvedEvent : "received", ctx.lang, customerEmail, {
       customerName: result.order.customerName || customerEmail || "customer",
       orderNumber: result.order.name,
       requestNumber: created.requestNumber,
@@ -1756,7 +1757,12 @@ async function handleSubmit(ctx: ProxyContext, formData: FormData) {
       trackingLink: trackingUrl || "",
     }).catch((e) => {
       console.error("[Return Portal] Failed to send confirmation email:", e);
+      return { ok: false };
     });
+    // Auto-approved with its label delivered: same state as an admin approval email.
+    if (settings.autoApproveRequests && labelUrl && sent.ok) {
+      await prisma.returnRequest.update({ where: { id: created.id }, data: { approvalEmailSentAt: new Date() } }).catch(() => null);
+    }
   }
 
   return confirmationScreen(ctx, created.requestNumber ?? "", token.requestType, settings.complaintRequireItemReturn, labelUrl, settings);

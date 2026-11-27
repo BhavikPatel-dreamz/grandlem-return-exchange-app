@@ -557,6 +557,24 @@ describe("admin approval", () => {
     expect(state.emails.filter((e) => e.event === "approved")).toHaveLength(1);
   });
 
+  it("addresses the customer by name, not by email", async () => {
+    await adminAction("approve");
+    expect(state.emails.find((e) => e.event === "approved")?.vars.customerName).toBe("Test Buyer");
+  });
+
+  it("approving an exchange emails the exchange template with the return label", async () => {
+    const { createExchangePaymentLink } = await import("../app/services/exchanges.server");
+    vi.mocked(createExchangePaymentLink).mockResolvedValueOnce({ required: false, total: 0, orderId: "gid://shopify/Order/2002" } as any);
+    state.returnRequests[0].type = "exchange";
+    const result = await adminAction("exchange_payment_link");
+    expect(result.ok).toBe(true);
+    expect(shipCalls()).toHaveLength(1);
+    const email = state.emails.find((e) => e.event === "exchange_approved");
+    expect(email?.vars.labelLink).toBe("https://labels.example/777.pdf");
+    expect(email?.vars.items).toBe("Linen Shirt - M");
+    expect(state.emails.some((e) => e.event === "approved")).toBe(false);
+  });
+
   it("retrying the approval email reuses the existing label", async () => {
     state.emails.length = 0;
     await adminAction("approve");
