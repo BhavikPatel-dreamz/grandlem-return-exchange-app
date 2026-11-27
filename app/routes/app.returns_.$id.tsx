@@ -255,7 +255,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
       const emailResult = await sendApprovedReturnEmail(shop, rr);
       if (!emailResult.ok) {
-        return { ok: false, intent, message: `Request approved, but ${emailResult.error}. The approval email was not sent.` };
+        return { ok: false, intent, message: `Request approved, but ${emailResult.error?.replace(/\.+$/, "")}. The approval email was not sent.` };
       }
       return { ok: true, intent, message: "Request approved and email sent with the return label" };
     }
@@ -266,7 +266,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
       const emailResult = await sendApprovedReturnEmail(shop, rr);
       if (!emailResult.ok) {
-        return { ok: false, intent, message: `Retry failed: ${emailResult.error}. The approval email was not sent.` };
+        return { ok: false, intent, message: `Retry failed: ${emailResult.error?.replace(/\.+$/, "")}. The approval email was not sent.` };
       }
       return { ok: true, intent, message: "Approval email sent with the return label" };
     }
@@ -311,7 +311,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (intent === "void_label") {
       const result = await voidReturnLabel(actualId);
       if (!result.ok) return { ok: false, intent: "void_label", message: result.error || "Unable to void shipping label" };
-      return { ok: true, message: "Label voided with ShippyPro" };
+      return { ok: true, message: "Shipment voided in ShippyPro. You can now create the label again (Retry label & email)." };
     }
     if (intent === "restock_update") {
       if (rr.type === "complaint") {
@@ -435,6 +435,36 @@ function ShipmentPreviewPanel({ preview }: { preview: ShipmentPreview }) {
   );
 }
 
+/**
+ * The next step for an approval email that was not sent. "Retry" would be
+ * refused while a shipment may already exist, so offer the step that unblocks it.
+ */
+function ApprovalEmailFix({ labelStatus, busy }: { labelStatus?: string | null; busy: boolean }) {
+  if (labelStatus === "needs_review") {
+    return (
+      <Form method="post" style={{ marginLeft: "auto" }}>
+        <input type="hidden" name="_action" value="void_label" />
+        <button type="submit" className="returbo-btn-danger-outline">Void shipment first</button>
+      </Form>
+    );
+  }
+  if (labelStatus === "unknown" || labelStatus === "sending") {
+    return (
+      <span style={{ marginLeft: "auto", fontSize: 12.5 }}>
+        Check ShippyPro, then use “No shipment was created” in the shipping section.
+      </span>
+    );
+  }
+  return (
+    <Form method="post" style={{ marginLeft: "auto" }}>
+      <input type="hidden" name="_action" value="retry_approval_email" />
+      <button type="submit" className="returbo-btn-primary" disabled={busy} aria-busy={busy}>
+        {busy ? "Retrying..." : "Retry label & email"}
+      </button>
+    </Form>
+  );
+}
+
 function getStatusBadgeClass(status: string) {
   const s = (status || "").toLowerCase().trim();
   if (s.includes("submitted") || s.includes("pending approval")) return "returbo-status-submitted";
@@ -518,12 +548,7 @@ export default function ReturnDetailPage() {
             {actionData.ok === false
               && (actionData.intent === "approve" || actionData.intent === "retry_approval_email" || actionData.intent === "exchange_payment_link")
               && rr.customerEmail && (
-                <Form method="post" style={{ marginLeft: "auto" }}>
-                  <input type="hidden" name="_action" value="retry_approval_email" />
-                  <button type="submit" className="returbo-btn-primary" disabled={isRetryingApprovalEmail} aria-busy={isRetryingApprovalEmail}>
-                    {isRetryingApprovalEmail ? "Retrying..." : "Retry label & email"}
-                  </button>
-                </Form>
+                <ApprovalEmailFix labelStatus={rr.label?.status} busy={isRetryingApprovalEmail} />
               )}
           </div>
         )}
@@ -543,12 +568,7 @@ export default function ReturnDetailPage() {
                   : "Return label has not been generated; the approval email has not been sent."}
             </span>
             {rr.customerEmail && (
-              <Form method="post" style={{ marginLeft: "auto" }}>
-                <input type="hidden" name="_action" value="retry_approval_email" />
-                <button type="submit" className="returbo-btn-primary" disabled={isRetryingApprovalEmail} aria-busy={isRetryingApprovalEmail}>
-                  {isRetryingApprovalEmail ? "Retrying..." : "Retry label & email"}
-                </button>
-              </Form>
+              <ApprovalEmailFix labelStatus={rr.label?.status} busy={isRetryingApprovalEmail} />
             )}
           </div>
         )}
