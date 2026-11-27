@@ -5,6 +5,7 @@ import { getOrCreateSettings, parseJson } from "./settings.server";
 import { decryptSecret, encryptSecret } from "./crypto.server";
 import { sendEmail } from "./email.server";
 import { emailRecipientFor, isTestShop, liveLabelBlockedReason } from "./test-mode.server";
+import { RETRYABLE_LABEL_STATUSES } from "./label-status";
 
 const DEFAULT_SHIPPYPRO_URL = "https://api.shippypro.com/v1";
 const LEGACY_SHIPPYPRO_URL = "https://www.shippypro.com/api";
@@ -443,16 +444,9 @@ function routingDecision(original: any, settings: any, market: string | null) {
 }
 
 // ---- Label lifecycle (one label per request) ------------------------------
-// ReturnLabel.status:
-//   sending       a Ship call is in progress (acts as the lock)
-//   created       label ready (tracking webhooks may later overwrite it with carrier statuses)
-//   failed        ShippyPro rejected the shipment, or it was never sent: safe to try again
-//   unknown       Ship was sent but the outcome is unknown: a shipment MAY exist
-//   needs_review  ShippyPro created a shipment but returned no label file
-//   voided        voided with ShippyPro: safe to try again
-// Only `failed`, `voided` and the legacy default `pending` allow a new Ship call.
-// Nothing here retries Ship automatically; every new attempt is an explicit action.
-export const RETRYABLE_LABEL_STATUSES = ["failed", "voided", "pending"];
+// Statuses are described in ./label-status. Nothing here retries Ship
+// automatically; every new attempt is an explicit action.
+export { RETRYABLE_LABEL_STATUSES } from "./label-status";
 
 export type CreateLabelResult = { ok: boolean; error?: string };
 
