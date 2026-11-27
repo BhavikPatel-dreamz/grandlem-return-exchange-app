@@ -436,7 +436,8 @@ function routingDecision(original: any, settings: any, market: string | null) {
     flagged = true;
     reason = "Original shipment not found; using market default";
     const key = (market || "default").toUpperCase();
-    const def = defaults[key] || defaults["DEFAULT"];
+    // A market entry may hold only a fallback parcel; then use the Default carrier.
+    const def = [defaults[key], defaults["DEFAULT"]].find((d) => d?.carrierId);
     carrierId = def?.carrierId ?? null;
     service = def?.service ?? null;
   }

@@ -482,6 +482,17 @@ describe("return label mirrors the original shipment", () => {
     expect(preview.parcels).toEqual([{ weight: 1.2, length: 35, width: 25, height: 8 }]);
   });
 
+  it("falls back to the Default carrier when the market rule has only a parcel", async () => {
+    state.settings[world.SHOP].defaultReturnMethodPerMarket = JSON.stringify({
+      US: { parcel: { weight: 1.2, length: 35, width: 25, height: 8 } },
+      DEFAULT: { carrierId: "501", service: "Ground" },
+    });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(shipCalls()[0].params).toMatchObject({ CarrierID: 501, CarrierService: "Ground" });
+    expect(shipCalls()[0].params.parcels).toEqual([{ weight: 1.2, length: 35, width: 25, height: 8 }]);
+  });
+
   it("flags the request for review when the parcel had to be guessed", async () => {
     const { createReturnLabel } = await import("../app/services/shippypro.server");
     await createReturnLabel("rr_1");
