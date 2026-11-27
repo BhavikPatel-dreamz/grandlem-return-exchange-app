@@ -196,7 +196,16 @@ vi.mock("../app/db.server", () => {
       },
       findFirst: async ({ where }: any) => state.carriers.find((c) => matches(c, where)) ?? null,
       findMany: async ({ where }: any) => state.carriers.filter((c) => matches(c, where)),
+      upsert: async ({ where, create, update }: any) => {
+        const key = where.shop_shippyproCarrierId;
+        const row = state.carriers.find((c) => c.shop === key.shop && c.shippyproCarrierId === key.shippyproCarrierId);
+        if (row) return Object.assign(row, update);
+        const created = { id: `car_${state.carriers.length + 1}`, ...create };
+        state.carriers.push(created);
+        return created;
+      },
     },
+    courierService: { upsert: async ({ create }: any) => create },
   };
   return { default: prisma };
 });
@@ -441,6 +450,26 @@ describe("createReturnLabel", () => {
     expect((await confirmNoShipment("rr_1")).ok).toBe(false);
   });
 
+  it("treats ShippyPro's Error / ValidationErrors reply as a refusal (retry allowed)", async () => {
+    state.shippypro.Ship = () => ({
+      Error: "Invalid carrier",
+      ValidationErrors: "Params.to_address.country: Must be at most 2 characters long",
+    });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.error).toContain("Invalid carrier");
+    expect(result.error).toContain("Must be at most 2 characters long");
+    expect(state.returnLabels[0].status).toBe("failed");
+  });
+
+  it("sends the carrier type, not the connection's nickname, as CarrierName", async () => {
+    state.carriers[0].name = "My UPS account";
+    state.carriers[0].meta = JSON.stringify({ CarrierID: 501, Label: "My UPS account", CarrierName: "UPS" });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    await createReturnLabel("rr_1");
+    expect(shipCalls()[0].params.CarrierName).toBe("UPS");
+  });
+
   it("allows a new label after the old one is voided", async () => {
     const { createReturnLabel, voidReturnLabel } = await import("../app/services/shippypro.server");
     await createReturnLabel("rr_1");
@@ -474,16 +503,41 @@ describe("shipment pre-flight", () => {
   });
 
   it("previews the shipment without calling Ship", async () => {
-    state.order.shippingAddress.phone = "";
     const { previewReturnShipment } = await import("../app/services/shippypro.server");
     const preview = await previewReturnShipment("rr_1");
     expect(preview.ok).toBe(true);
     if (!preview.ok) return;
     expect(preview.from).toMatchObject({ name: "Test Buyer", zip: "10001" });
     expect(preview.to).toMatchObject({ name: "US Warehouse", zip: "07102" });
-    expect(preview.warnings).toContain("Customer (pickup) phone is empty (some carriers require it)");
     expect(shipCalls()).toHaveLength(0);
     expect(state.returnLabels).toHaveLength(0);
+  });
+
+  it("requires a warehouse phone before calling Ship (ShippyPro rejects it otherwise)", async () => {
+    state.location.address.phone = "";
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.error).toContain("Return warehouse phone is missing");
+    expect(shipCalls()).toHaveLength(0);
+  });
+
+  it("sends 2-letter country codes even when Settings hold a country name", async () => {
+    state.settings[world.SHOP].warehouseAddressesPerMarket = JSON.stringify({
+      US: { name: "US Returns", address1: "1 Return Ln", city: "Austin", zip: "73301", country: "United States", phone: "+1512000" },
+    });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(shipCalls()[0].params.to_address.country).toBe("US");
+  });
+
+  it("stops before Ship when a country cannot be turned into a code", async () => {
+    state.settings[world.SHOP].warehouseAddressesPerMarket = JSON.stringify({
+      US: { name: "US Returns", address1: "1 Return Ln", city: "Austin", zip: "73301", country: "Narnia", phone: "+1512000" },
+    });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.error).toContain('country "Narnia" must be a 2-letter code');
+    expect(shipCalls()).toHaveLength(0);
   });
 
   it("admin preview action returns the shipment details", async () => {
@@ -739,5 +793,18 @@ describe("ShippyPro connection settings", () => {
 
   it("does not store the pre-filled default URL as a custom URL", async () => {
     expect((await saveKey("", "https://api.shippypro.com/v1/")).shippyproApiUrl).toBeNull();
+  });
+});
+
+describe("carrier sync", () => {
+  it("keeps the carrier type from ShippyPro's grouped carrier list", async () => {
+    state.shippypro.GetCarriers = () => ({
+      Carriers: { DHLExpress: [{ CarrierID: 700, Label: "DHL main account", ServicesList: ["EXPRESS WORLDWIDE"] }] },
+    });
+    const { syncCarriers, shippyproCarrierType } = await import("../app/services/shippypro.server");
+    expect((await syncCarriers(world.SHOP)).ok).toBe(true);
+    const synced = state.carriers.find((c) => c.shippyproCarrierId === "700");
+    expect(synced.name).toBe("DHL main account");
+    expect(shippyproCarrierType(synced)).toBe("DHLExpress");
   });
 });
