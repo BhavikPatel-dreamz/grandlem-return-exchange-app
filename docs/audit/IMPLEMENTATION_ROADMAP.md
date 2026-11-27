@@ -5,6 +5,20 @@ Principle: reuse the existing app (React Router + Prisma + ShippyPro service); n
 
 Gate 0 decides everything shipping-related. Phases 1–2 (safety + correctness) do not need provider answers and can start once approved.
 
+## Owner decisions (2026-11-27)
+
+| # | Decision |
+|---|---|
+| D-1 | **Provider = ShippyPro** (the existing integration). "Shopflo" in the brief referred to ShippyPro. |
+| D-2 | **Production flow:** admin approves → app calls ShippyPro once → label generated → customer gets an email with the label link → customer prints the label → the carrier collects the parcel. |
+| D-3 | **One label per request.** If generation fails on approve, the app must **not** send the shipment to ShippyPro again automatically. It first checks (single order + single request) whether a shipment already exists, and only an explicit admin action may try again. |
+| D-4 | **Isolation is mandatory.** Dev-store testing must never touch live-store data or use the live store's credentials by accident. |
+| D-5 | **Return address and parcel come from the original outbound shipment.** Reuse the same parcel details (weight/dimensions) and the same addresses as the first shipment, **with sender and receiver swapped**. |
+| D-6 | **Partial quantity returns.** Example: a customer bought 10 and returns 5. The other 5 stay eligible. Not every return is a full-order return. |
+| D-7 | **Tracking webhook hardening (S4) is deferred** and recorded as a pending task in `docs/AGENTS.md`. |
+
+Still open: G3 (exchange gets a return label?), G4 (Sweden customs rule), G6 (Shopify Returns API), the fallback when no original shipment is found (D-5), and the provider answers needed before the live test (shipping doc §9).
+
 ---
 
 ## Gate 0: decisions needed from the owner
@@ -45,7 +59,7 @@ Gate 0 decides everything shipping-related. Phases 1–2 (safety + correctness) 
 - **Frontend:** preview card on request detail (sender, destination, parcel, carrier/service) before approve
 - **Acceptance:** invalid address → no API call, clear message.
 
-### S4. Secure tracking webhook
+### S4. Secure tracking webhook (DEFERRED by owner, D-7; tracked in docs/AGENTS.md)
 - **Files:** `app/routes/webhooks.shippypro.ts`
 - **Env:** `SHIPPYPRO_WEBHOOK_SECRET`
 - **Backend:** verify secret (header/query, per provider support); match only by `shippyproOrderId`/`trackingNumber` (unique to our label), drop the cross-shop `orderNumber` fallback
@@ -70,8 +84,8 @@ Gate 0 decides everything shipping-related. Phases 1–2 (safety + correctness) 
 
 | Task | Files | Change | Acceptance |
 |---|---|---|---|
-| **L1** Parcel weight/dims | `shippypro.server.ts`, Settings | Default parcel per market + sum of variant weights | No hard-coded 1 kg |
-| **L2** Destination priority | `shippypro.server.ts:434` | Configured return address first (per G5) | Label goes to configured warehouse |
+| **L1** Parcel from original shipment (D-5) | `shippypro.server.ts` (`findOriginalShipment`, `createReturnLabel`) | Read parcel weight/dimensions from the original outbound ShippyPro shipment and reuse them. Fallback when not found: Settings default parcel per market, and flag for review. Verify which `GetShipmentsReport`/`GetOrder` fields carry parcels before coding | No hard-coded 1 kg when the original shipment exists |
+| **L2** Swapped addresses (D-5) | `shippypro.server.ts:434-509` | Return destination = original shipment's sender (warehouse). Return sender = original shipment's receiver, with the Shopify order shipping address as fallback. When no original shipment is found: per-market return address from Settings (not the Shopify location) | Return label mirrors the outbound shipment |
 | **L3** Customs rule | `shippypro.server.ts:451` | Per G4 | SE domestic return without HS codes works (if G4 says so) |
 | **L4** Pickup address confirm | proxy details screen | Show/edit pickup address + phone, store on request | Label uses confirmed address |
 | **L5** Print view (optional) | new `app.returns.$id.label.tsx` | Authenticated route streaming the PDF for print | Prints from admin |
