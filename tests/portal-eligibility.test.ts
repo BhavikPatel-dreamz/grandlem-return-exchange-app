@@ -162,6 +162,6 @@ describe("legacy /portal route", () => {
   it("does not accept posted forms or arbitrary hosts", async () => {
     const { loader, action } = await import("../app/routes/portal");
     await expect(loader({ request: new Request("https://app.test/portal?shop=evil.example.com") } as any)).rejects.toMatchObject({ status: 404 });
-    await expect(action({ request: new Request("https://app.test/portal", { method: "POST" }) } as any)).rejects.toMatchObject({ status: 410 });
+    await expect(action()).rejects.toMatchObject({ status: 410 });
   });
 });
