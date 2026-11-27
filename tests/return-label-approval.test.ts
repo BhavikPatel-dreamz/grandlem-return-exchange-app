@@ -167,7 +167,7 @@ vi.mock("../app/db.server", () => {
         return created;
       },
       update: async ({ where, data }: any) => {
-        const row = state.returnLabels.find((l) => l.id === where.id);
+        const row = state.returnLabels.find((l) => matches(l, where));
         if (!row) throw new Error("not found");
         return Object.assign(row, data);
       },
@@ -250,6 +250,16 @@ afterEach(() => {
   delete process.env.SHIPPYPRO_API_KEY;
 });
 
+function world_okShip() {
+  return {
+    Result: "OK",
+    NewOrderID: 777,
+    PDF: ["https://labels.example/777.pdf"],
+    TrackingNumber: "1Z999",
+    TrackingExternalLink: "https://track.example/1Z999",
+  };
+}
+
 const shipCalls = () => state.calls.filter((c) => c.method === "Ship");
 
 async function adminAction(intent: string, extra: Record<string, string> = {}, id = "rr_1") {
@@ -309,22 +319,75 @@ describe("createReturnLabel", () => {
     expect(shipCalls()).toHaveLength(0);
   });
 
-  // Known defects from docs/audit (D1, D2). Fixed in roadmap step S1;
-  // `it.fails` turns into a normal `it` there.
-  it.fails("does not send Ship again when the first call's outcome is unknown (timeout)", async () => {
-    state.shippypro.Ship = () => {
-      throw new Error("network timeout");
-    };
+  it("sends Ship only once when ShippyPro rejects the shipment", async () => {
+    state.shippypro.Ship = () => ({ Result: "ERROR", ErrorMessage: "Invalid ZIP" });
     const { createReturnLabel } = await import("../app/services/shippypro.server");
     await createReturnLabel("rr_1");
     expect(shipCalls()).toHaveLength(1);
   });
 
-  it.fails("refuses to create a second label while one already exists", async () => {
+  it("marks a timeout as unknown and does not send Ship again", async () => {
+    state.shippypro.Ship = () => {
+      throw new Error("network timeout");
+    };
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const first = await createReturnLabel("rr_1");
+    expect(first.ok).toBe(false);
+    expect(state.returnLabels[0].status).toBe("unknown");
+
+    state.shippypro.Ship = world_okShip;
+    const second = await createReturnLabel("rr_1");
+    expect(second.ok).toBe(false);
+    expect(second.error).toContain("unknown result");
+    expect(shipCalls()).toHaveLength(1);
+  });
+
+  it("allows a new attempt only after the admin confirms no shipment was created", async () => {
+    state.shippypro.Ship = () => {
+      throw new Error("network timeout");
+    };
+    const { createReturnLabel, confirmNoShipment } = await import("../app/services/shippypro.server");
+    await createReturnLabel("rr_1");
+
+    state.shippypro.Ship = world_okShip;
+    expect((await confirmNoShipment("rr_1")).ok).toBe(true);
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(shipCalls()).toHaveLength(2);
+    expect(state.returnLabels[0].status).toBe("created");
+  });
+
+  it("refuses to create a second label while one already exists", async () => {
     const { createReturnLabel } = await import("../app/services/shippypro.server");
     await createReturnLabel("rr_1");
-    await createReturnLabel("rr_1");
+    const second = await createReturnLabel("rr_1");
+    expect(second.ok).toBe(false);
+    expect(second.error).toContain("already exists");
     expect(shipCalls()).toHaveLength(1);
+  });
+
+  it("sends only one Ship when two requests race", async () => {
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const results = await Promise.all([createReturnLabel("rr_1"), createReturnLabel("rr_1")]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(shipCalls()).toHaveLength(1);
+  });
+
+  it("keeps the shipment id for voiding when no label file comes back", async () => {
+    state.shippypro.Ship = () => ({ Result: "OK", NewOrderID: 888 });
+    const { createReturnLabel } = await import("../app/services/shippypro.server");
+    const result = await createReturnLabel("rr_1");
+    expect(result.ok).toBe(false);
+    expect(state.returnLabels[0]).toMatchObject({ status: "needs_review", shippyproOrderId: "888" });
+    expect((await createReturnLabel("rr_1")).ok).toBe(false);
+    expect(shipCalls()).toHaveLength(1);
+  });
+
+  it("allows a new label after the old one is voided", async () => {
+    const { createReturnLabel, voidReturnLabel } = await import("../app/services/shippypro.server");
+    await createReturnLabel("rr_1");
+    expect((await voidReturnLabel("rr_1")).ok).toBe(true);
+    expect((await createReturnLabel("rr_1")).ok).toBe(true);
+    expect(shipCalls()).toHaveLength(2);
   });
 });
 
