@@ -177,7 +177,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return { rr: { ...rr, items, customerName }, itemImages, carrierName, warehouseAddress, testMode };
 };
 
-async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumber: string | null; customerEmail: string | null }) {
+type ApprovalEmailRequest = {
+  id: string;
+  type: string;
+  orderNumber: string | null;
+  customerEmail: string | null;
+  customerName: string | null;
+  items?: { title: string | null }[];
+};
+
+/** Creates (or reuses) the return label, then emails it. Returns and exchanges get their own template. */
+async function sendApprovedReturnEmail(shop: string, rr: ApprovalEmailRequest) {
   if (!rr.customerEmail) return { ok: false, error: "Customer email is missing" };
 
   let label = await prisma.returnLabel.findUnique({ where: { returnRequestId: rr.id } });
@@ -191,9 +201,11 @@ async function sendApprovedReturnEmail(shop: string, rr: { id: string; orderNumb
   if (!label?.labelUrl) return { ok: false, error: "No return label URL was generated" };
 
   try {
-    const result = await sendEventEmail(shop, "approved", "en", rr.customerEmail, {
-      customerName: rr.customerEmail,
+    const event = rr.type === "exchange" ? "exchange_approved" : "approved";
+    const result = await sendEventEmail(shop, event, "en", rr.customerEmail, {
+      customerName: rr.customerName || rr.customerEmail,
       orderNumber: rr.orderNumber,
+      items: (rr.items ?? []).map((it) => it.title).filter(Boolean).join(", "),
       labelLink: label.labelUrl,
       trackingLink: label.trackingUrl || "",
     });
@@ -247,8 +259,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true, intent, message: "Request approved and email sent with the return label" };
     }
     if (intent === "retry_approval_email") {
-      if (rr.status !== "Approved") {
-        return { ok: false, intent, message: "Approve the return before retrying its approval email." };
+      const approvedExchange = rr.type === "exchange" && ["Awaiting Payment", "Paid"].includes(rr.status);
+      if (rr.status !== "Approved" && !approvedExchange) {
+        return { ok: false, intent, message: "Approve the request before retrying its approval email." };
       }
       const emailResult = await sendApprovedReturnEmail(shop, rr);
       if (!emailResult.ok) {
@@ -266,7 +279,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         return { ok: false, intent: "review", message: `This request is already ${rr.status.toLowerCase()} and cannot be rejected.` };
       }
       await sendEventEmail(shop, "rejected", "en", rr.customerEmail || "", {
-        customerName: rr.customerEmail || "customer",
+        customerName: rr.customerName || rr.customerEmail || "customer",
         orderNumber: rr.orderNumber,
         reason,
       }).catch(() => null);
@@ -343,7 +356,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const result = await createExchangePaymentLink(shop, actualId, rr.customerEmail);
       if (result.required) {
         const emailResult = await sendEventEmail(shop, "payment_required", "en", rr.customerEmail || "", {
-          customerName: rr.customerEmail || "customer",
+          customerName: rr.customerName || rr.customerEmail || "customer",
           orderNumber: rr.orderNumber,
           amount: result.total.toFixed(2),
           paymentLink: result.invoiceUrl || "",
@@ -352,10 +365,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           return { ok: false, message: `Exchange invoice created, but its email could not be sent. Share this Shopify link with the customer: ${result.invoiceUrl}` };
         }
       }
+      // The customer still sends the original item back: label + exchange email.
+      const labelEmail = await sendApprovedReturnEmail(shop, rr);
+      const labelNote = labelEmail.ok
+        ? " Return label emailed to the customer."
+        : ` The return label email was not sent: ${labelEmail.error}.`;
       if (!result.required) {
-        return { ok: true, message: `No additional payment required. Replacement order created: ${result.orderId}` };
+        return { ok: labelEmail.ok, intent, message: `No additional payment required. Replacement order created: ${result.orderId}.${labelNote}` };
       }
-      return { ok: true, message: `Payment link created: ${result.invoiceUrl}` };
+      return { ok: labelEmail.ok, intent, message: `Payment link created: ${result.invoiceUrl}.${labelNote}` };
     }
     if (intent === "status_update") {
       const status = String(formData.get("status") || rr.status);
@@ -497,7 +515,7 @@ export default function ReturnDetailPage() {
             </svg>
             <span>{actionData.message}</span>
             {actionData.ok === false
-              && (actionData.intent === "approve" || actionData.intent === "retry_approval_email")
+              && (actionData.intent === "approve" || actionData.intent === "retry_approval_email" || actionData.intent === "exchange_payment_link")
               && rr.customerEmail && (
                 <Form method="post" style={{ marginLeft: "auto" }}>
                   <input type="hidden" name="_action" value="retry_approval_email" />
